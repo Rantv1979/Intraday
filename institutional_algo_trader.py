@@ -261,100 +261,220 @@ class KiteBroker:
         self.ticker = None
         self.connected = False
         self.ltp_cache = {}
+        self.instruments_dict = {}
+        self.websocket_running = False
         
         if not demo_mode and KITE_AVAILABLE:
             self.connect()
     
     def connect(self):
-        """Connect to Kite"""
+        """Connect to Kite with proper error handling"""
         try:
-            api_key = os.getenv('KITE_API_KEY', '')
-            access_token = os.getenv('KITE_ACCESS_TOKEN', '')
+            # Try multiple ways to get credentials
+            api_key = os.getenv('KITE_API_KEY') or st.secrets.get("KITE_API_KEY", "") if hasattr(st, 'secrets') else ""
+            access_token = os.getenv('KITE_ACCESS_TOKEN') or st.secrets.get("KITE_ACCESS_TOKEN", "") if hasattr(st, 'secrets') else ""
             
             if not api_key or not access_token:
-                st.error("❌ Kite credentials not found in environment variables")
+                st.warning("⚠️ Kite credentials not found. Add to .streamlit/secrets.toml or environment variables")
+                st.info("""
+                **Setup Instructions:**
+                1. Create `.streamlit/secrets.toml` file
+                2. Add:
+                   ```
+                   KITE_API_KEY = "your_api_key"
+                   KITE_ACCESS_TOKEN = "your_access_token"
+                   ```
+                OR set environment variables before running
+                """)
                 self.demo_mode = True
                 return False
             
+            # Initialize Kite Connect
             self.kite = KiteConnect(api_key=api_key)
             self.kite.set_access_token(access_token)
             
-            # Test connection
+            # Test connection by fetching profile
             profile = self.kite.profile()
-            st.success(f"✅ Connected: {profile['user_name']}")
-            self.connected = True
+            st.success(f"✅ Connected to Zerodha Kite")
+            st.info(f"👤 User: {profile['user_name']} | Email: {profile['email']}")
             
-            # Setup WebSocket
-            self.setup_websocket()
+            # Load instruments for symbol to token mapping
+            self.load_instruments()
+            
+            # Setup WebSocket for live data
+            self.setup_websocket(api_key, access_token)
+            
+            self.connected = True
             return True
             
         except Exception as e:
-            st.error(f"❌ Connection failed: {e}")
+            st.error(f"❌ Kite Connection Failed: {str(e)}")
+            st.info("Running in DEMO mode. To enable live trading:")
+            st.code("""
+# On Linux/Mac:
+export KITE_API_KEY="your_key"
+export KITE_ACCESS_TOKEN="your_token"
+
+# On Windows:
+set KITE_API_KEY=your_key
+set KITE_ACCESS_TOKEN=your_token
+
+# Then run:
+streamlit run institutional_algo_trader.py
+            """)
             self.demo_mode = True
             return False
     
-    def setup_websocket(self):
-        """Setup live data stream"""
+    def load_instruments(self):
+        """Load all NSE instruments for trading"""
         try:
-            self.ticker = KiteTicker(
-                os.getenv('KITE_API_KEY'),
-                os.getenv('KITE_ACCESS_TOKEN')
-            )
+            instruments = self.kite.instruments("NSE")
             
-            def on_ticks(ws, ticks):
-                for tick in ticks:
-                    # Cache LTP
-                    self.ltp_cache[tick['instrument_token']] = tick['last_price']
+            # Create symbol to token mapping
+            for inst in instruments:
+                symbol = inst['tradingsymbol']
+                self.instruments_dict[symbol] = {
+                    'token': inst['instrument_token'],
+                    'lot_size': inst.get('lot_size', 1),
+                    'tick_size': inst.get('tick_size', 0.05)
+                }
             
-            self.ticker.on_ticks = on_ticks
-            threading.Thread(target=self.ticker.connect, daemon=True).start()
+            st.success(f"✅ Loaded {len(self.instruments_dict)} instruments from NSE")
             
         except Exception as e:
-            st.warning(f"WebSocket failed: {e}")
+            st.warning(f"⚠️ Failed to load instruments: {e}")
+            self.instruments_dict = {}
+    
+    
+    def setup_websocket(self, api_key, access_token):
+        """Setup WebSocket for live market data"""
+        try:
+            self.ticker = KiteTicker(api_key, access_token)
+            
+            def on_ticks(ws, ticks):
+                """Handle incoming market ticks"""
+                for tick in ticks:
+                    token = tick['instrument_token']
+                    
+                    # Find symbol from token
+                    for symbol, data in self.instruments_dict.items():
+                        if data['token'] == token:
+                            self.ltp_cache[symbol] = tick['last_price']
+                            break
+            
+            def on_connect(ws, response):
+                """On WebSocket connection"""
+                st.info("🔌 WebSocket connected for live data")
+                
+                # Subscribe to top 50 stocks for live data
+                tokens = []
+                for symbol in StockUniverse.get_all_fno_stocks()[:50]:
+                    if symbol in self.instruments_dict:
+                        tokens.append(self.instruments_dict[symbol]['token'])
+                
+                if tokens:
+                    ws.subscribe(tokens)
+                    ws.set_mode(ws.MODE_LTP, tokens)  # Get only LTP for efficiency
+            
+            def on_close(ws, code, reason):
+                """On WebSocket close"""
+                st.warning(f"⚠️ WebSocket closed: {reason}")
+                self.websocket_running = False
+            
+            def on_error(ws, code, reason):
+                """On WebSocket error"""
+                st.error(f"❌ WebSocket error: {reason}")
+            
+            # Set callbacks
+            self.ticker.on_ticks = on_ticks
+            self.ticker.on_connect = on_connect
+            self.ticker.on_close = on_close
+            self.ticker.on_error = on_error
+            
+            # Start WebSocket in background thread
+            def start_ticker():
+                try:
+                    self.ticker.connect(threaded=True)
+                    self.websocket_running = True
+                except Exception as e:
+                    st.error(f"WebSocket thread error: {e}")
+            
+            threading.Thread(target=start_ticker, daemon=True).start()
+            st.success("✅ WebSocket initialized for live prices")
+            
+        except Exception as e:
+            st.warning(f"⚠️ WebSocket setup failed: {e}. Will use REST API for prices.")
     
     def get_ltp(self, symbol):
-        """Get last price"""
+        """Get last traded price - tries WebSocket cache first, then API"""
+        
+        # Try WebSocket cache first (fastest)
+        if symbol in self.ltp_cache:
+            return self.ltp_cache[symbol]
+        
+        # Try Kite API (if connected)
         if self.connected and self.kite:
             try:
-                ltp = self.kite.ltp([f"NSE:{symbol}"])
-                return ltp[f"NSE:{symbol}"]['last_price']
-            except:
+                quote = self.kite.ltp([f"NSE:{symbol}"])
+                price = quote[f"NSE:{symbol}"]['last_price']
+                self.ltp_cache[symbol] = price
+                return price
+            except Exception as e:
+                # Silent fail, continue to demo price
                 pass
         
-        # Demo price
-        return 1000 + (abs(hash(symbol)) % 5000)
+        # Fallback to deterministic demo price
+        hash_value = abs(hash(symbol)) % 10000
+        return 1000 + (hash_value / 100)
     
     def get_historical(self, symbol, days=30):
-        """Get historical data"""
+        """Get historical data from Kite or generate synthetic"""
+        
         if self.connected and self.kite:
             try:
-                instruments = self.kite.instruments('NSE')
-                token = next(
-                    (i['instrument_token'] for i in instruments 
-                     if i['tradingsymbol'] == symbol),
-                    None
+                # Get instrument token
+                if symbol not in self.instruments_dict:
+                    st.warning(f"⚠️ Symbol {symbol} not found in instruments")
+                    return self.generate_synthetic(symbol, days)
+                
+                token = self.instruments_dict[symbol]['token']
+                
+                # Fetch historical data
+                from_date = datetime.now() - timedelta(days=days)
+                to_date = datetime.now()
+                
+                data = self.kite.historical_data(
+                    instrument_token=token,
+                    from_date=from_date,
+                    to_date=to_date,
+                    interval='5minute'
                 )
                 
-                if token:
-                    data = self.kite.historical_data(
-                        token,
-                        datetime.now() - timedelta(days=days),
-                        datetime.now(),
-                        '5minute'
-                    )
-                    df = pd.DataFrame(data)
-                    df['date'] = pd.to_datetime(df['date'])
-                    df = df.rename(columns={
-                        'date': 'timestamp',
-                        'open': 'Open',
-                        'high': 'High',
-                        'low': 'Low',
-                        'close': 'Close',
-                        'volume': 'Volume'
-                    })
-                    return df.set_index('timestamp')
-            except:
-                pass
+                if not data:
+                    st.warning(f"⚠️ No data received for {symbol}")
+                    return self.generate_synthetic(symbol, days)
+                
+                # Convert to DataFrame
+                df = pd.DataFrame(data)
+                df['date'] = pd.to_datetime(df['date'])
+                df = df.rename(columns={
+                    'date': 'timestamp',
+                    'open': 'Open',
+                    'high': 'High',
+                    'low': 'Low',
+                    'close': 'Close',
+                    'volume': 'Volume'
+                })
+                df = df.set_index('timestamp')
+                
+                # Filter to market hours only (9:15 AM to 3:30 PM)
+                df = df.between_time('09:15', '15:30')
+                
+                return df
+                
+            except Exception as e:
+                st.warning(f"⚠️ Kite historical data failed for {symbol}: {e}")
+                return self.generate_synthetic(symbol, days)
         
         # Generate synthetic data
         return self.generate_synthetic(symbol, days)
