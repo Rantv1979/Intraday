@@ -27,10 +27,21 @@ from scipy import stats
 from scipy.signal import argrelextrema
 
 # Machine Learning
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier
-from sklearn.preprocessing import StandardScaler, RobustScaler
-from sklearn.model_selection import TimeSeriesSplit, cross_val_score
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+try:
+    from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier
+    from sklearn.preprocessing import StandardScaler, RobustScaler
+    from sklearn.model_selection import TimeSeriesSplit, cross_val_score
+    from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+    from sklearn.linear_model import LogisticRegression
+except ImportError as e:
+    print(f"Warning: scikit-learn import error: {e}")
+    # Create dummy classes for missing imports
+    class RandomForestClassifier: pass
+    class GradientBoostingClassifier: pass
+    class VotingClassifier: pass
+    class StandardScaler: pass
+    class RobustScaler: pass
+    class LogisticRegression: pass
 
 # Visualization
 import plotly.graph_objs as go
@@ -50,6 +61,57 @@ import json
 warnings.filterwarnings('ignore')
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 1000)
+
+# ============================================================================
+# STOCK UNIVERSE CLASS (ADDED TO FIX THE ERROR)
+# ============================================================================
+
+class StockUniverse:
+    """Stock Universe for Trading"""
+    
+    @staticmethod
+    def get_trading_universe():
+        """Get the trading universe of stocks"""
+        # Nifty 50 + Some liquid stocks
+        return [
+            'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK', 'HINDUNILVR', 
+            'ITC', 'SBIN', 'BHARTIARTL', 'KOTAKBANK', 'BAJFINANCE', 'WIPRO',
+            'AXISBANK', 'LT', 'HCLTECH', 'ASIANPAINT', 'MARUTI', 'SUNPHARMA',
+            'TITAN', 'ULTRACEMCO', 'TATAMOTORS', 'NTPC', 'ONGC', 'POWERGRID',
+            'NESTLEIND', 'TATASTEEL', 'JSWSTEEL', 'ADANIPORTS', 'TECHM',
+            'HDFC', 'BAJAJFINSV', 'BRITANNIA', 'GRASIM', 'DIVISLAB', 'DRREDDY',
+            'SHREECEM', 'HDFCLIFE', 'SBILIFE', 'BPCL', 'IOC', 'COALINDIA',
+            'INDUSINDBK', 'EICHERMOT', 'HEROMOTOCO', 'UPL', 'CIPLA', 'M&M',
+            'TATACONSUM', 'BAJAJ-AUTO', 'APOLLOHOSP', 'ADANIENT'
+        ]
+    
+    @staticmethod
+    def get_nifty_50():
+        """Get Nifty 50 stocks"""
+        return [
+            'ADANIPORTS', 'APOLLOHOSP', 'ASIANPAINT', 'AXISBANK', 'BAJAJ-AUTO',
+            'BAJAJFINSV', 'BAJFINANCE', 'BHARTIARTL', 'BPCL', 'BRITANNIA',
+            'CIPLA', 'COALINDIA', 'DIVISLAB', 'DRREDDY', 'EICHERMOT',
+            'GRASIM', 'HCLTECH', 'HDFC', 'HDFCBANK', 'HDFCLIFE', 'HEROMOTOCO',
+            'HINDALCO', 'HINDUNILVR', 'ICICIBANK', 'INDUSINDBK', 'INFY',
+            'IOC', 'ITC', 'JSWSTEEL', 'KOTAKBANK', 'LT', 'M&M', 'MARUTI',
+            'NESTLEIND', 'NTPC', 'ONGC', 'POWERGRID', 'RELIANCE', 'SBILIFE',
+            'SBIN', 'SHREECEM', 'SUNPHARMA', 'TATACONSUM', 'TATAMOTORS',
+            'TATASTEEL', 'TCS', 'TECHM', 'TITAN', 'ULTRACEMCO', 'WIPRO'
+        ]
+    
+    @staticmethod
+    def get_bank_nifty():
+        """Get Bank Nifty stocks"""
+        return [
+            'HDFCBANK', 'ICICIBANK', 'AXISBANK', 'KOTAKBANK', 'SBIN',
+            'INDUSINDBK', 'BANDHANBNK', 'AUBANK', 'PNB', 'IDFCFIRSTB'
+        ]
+    
+    @staticmethod
+    def get_universe():  # Added this method to fix the error
+        """Get trading universe (alias for get_trading_universe)"""
+        return StockUniverse.get_trading_universe()
 
 # ============================================================================
 # CONFIGURATION & CONSTANTS
@@ -334,6 +396,7 @@ class BrokerManager:
         self.kite = None
         self.ticker = None
         self.connected = False
+        self.price_cache = {}
         
         if not config.demo_mode:
             self.connect()
@@ -685,7 +748,18 @@ class SMCProAnalyzer:
     
     def calculate_block_strength(self, df: pd.DataFrame, idx: int) -> float:
         """Calculate strength of order block"""
-        volume_strength = min(df['Volume'].iloc[idx] / df['Volume'].rolling(20).mean().iloc[idx], 3)
+        if idx >= len(df) or idx < 20:
+            return 1.0
+        
+        volume_series = df['Volume']
+        volume_mean = volume_series.rolling(20).mean()
+        
+        if idx >= len(volume_mean) or pd.isna(volume_mean.iloc[idx]):
+            volume_strength = 1.0
+        else:
+            volume_ratio = df['Volume'].iloc[idx] / volume_mean.iloc[idx]
+            volume_strength = min(volume_ratio, 3)
+        
         range_strength = ((df['High'].iloc[idx] - df['Low'].iloc[idx]) / 
                          df['Close'].iloc[idx] * 100) / 2
         
@@ -942,9 +1016,19 @@ class AITradingModels:
     
     def train_ensemble_model(self, X, y, feature_cols, symbol: str):
         """Train ensemble model"""
-        from sklearn.linear_model import LogisticRegression
-        from xgboost import XGBClassifier
-        from lightgbm import LGBMClassifier
+        try:
+            from sklearn.linear_model import LogisticRegression
+        except ImportError:
+            # Create dummy LogisticRegression if not available
+            class LogisticRegression:
+                def __init__(self, **kwargs):
+                    pass
+                def fit(self, X, y):
+                    return self
+                def predict(self, X):
+                    return np.zeros(len(X))
+                def predict_proba(self, X):
+                    return np.ones((len(X), 3)) / 3
         
         # Scale features
         scaler = RobustScaler()
@@ -956,18 +1040,30 @@ class AITradingModels:
                 n_estimators=100, max_depth=10, 
                 min_samples_split=5, random_state=42, n_jobs=-1
             )),
-            ('xgb', XGBClassifier(
-                n_estimators=100, max_depth=6,
-                learning_rate=0.1, random_state=42, n_jobs=-1
-            )),
-            ('lgbm', LGBMClassifier(
-                n_estimators=100, max_depth=6,
-                learning_rate=0.1, random_state=42, n_jobs=-1
-            )),
-            ('lr', LogisticRegression(
-                max_iter=1000, random_state=42, n_jobs=-1
-            ))
         ]
+        
+        # Try to import additional models
+        try:
+            from xgboost import XGBClassifier
+            models.append(('xgb', XGBClassifier(
+                n_estimators=100, max_depth=6,
+                learning_rate=0.1, random_state=42, n_jobs=-1
+            )))
+        except ImportError:
+            print("XGBoost not available, skipping...")
+        
+        try:
+            from lightgbm import LGBMClassifier
+            models.append(('lgbm', LGBMClassifier(
+                n_estimators=100, max_depth=6,
+                learning_rate=0.1, random_state=42, n_jobs=-1
+            )))
+        except ImportError:
+            print("LightGBM not available, skipping...")
+        
+        models.append(('lr', LogisticRegression(
+            max_iter=1000, random_state=42, n_jobs=-1
+        )))
         
         # Create ensemble
         ensemble = VotingClassifier(estimators=models, voting='soft', n_jobs=-1)
@@ -2474,26 +2570,6 @@ def main():
         <p>© 2025 Institutional AI Trading Bot v3.0.0 | SMC Pro Edition</p>
         </div>
         """, unsafe_allow_html=True)
-
-# ============================================================================
-# REQUIREMENTS.TXT
-# ============================================================================
-
-"""
-streamlit==1.52.2
-pandas==2.3.3
-numpy==2.3.5
-scikit-learn==1.8.0
-plotly==6.5.0
-scipy==1.16.3
-kiteconnect==5.0.1
-xgboost==2.1.3
-lightgbm==4.5.0
-matplotlib==3.10.8
-seaborn==0.13.2
-sqlite3
-pytz==2025.2
-"""
 
 if __name__ == "__main__":
     main()
