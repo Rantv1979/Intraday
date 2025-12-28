@@ -1069,12 +1069,13 @@ def main():
         st.markdown('</div>', unsafe_allow_html=True)
     
     # Tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "🎯 Algo Trading",
         "📈 Positions",
         "📋 Trade History",
         "📊 Live Charts",
-        "📉 Analytics"
+        "📉 Analytics",
+        "⚙️ Settings"
     ])
     
     with tab1:
@@ -1316,6 +1317,287 @@ def main():
                 height=400
             )
             st.plotly_chart(fig, use_container_width=True)
+    
+    with tab6:
+        st.markdown("### ⚙️ Settings & Configuration")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### 🔑 Kite Connect Setup")
+            
+            # Connection status
+            if engine.broker.connected:
+                st.success("✅ Connected to Kite")
+                
+                # Show account info
+                try:
+                    if engine.broker.kite:
+                        profile = engine.broker.kite.profile()
+                        
+                        st.info(f"""
+                        **Account Details:**
+                        - Name: {profile['user_name']}
+                        - Email: {profile['email']}
+                        - User ID: {profile['user_id']}
+                        - Broker: {profile['broker']}
+                        """)
+                        
+                        # Margins
+                        margins = engine.broker.get_margins()
+                        st.metric("Available Margin", f"₹{margins['available']:,.0f}")
+                        st.metric("Used Margin", f"₹{margins['used']:,.0f}")
+                except Exception as e:
+                    st.warning(f"Could not fetch account details: {e}")
+                
+                # Disconnect option
+                if st.button("🔌 Disconnect", type="secondary"):
+                    engine.broker.connected = False
+                    engine.broker.kite = None
+                    engine.broker.demo_mode = True
+                    st.warning("Disconnected from Kite. Running in demo mode.")
+                    st.rerun()
+            
+            else:
+                st.warning("⚠️ Not connected to Kite")
+                
+                # Full token generator interface
+                st.markdown("---")
+                st.markdown("### 🎫 Generate New Access Token")
+                
+                with st.form("token_generator"):
+                    st.info("Generate a fresh access token (expires daily at 6 AM IST)")
+                    
+                    api_key = st.text_input(
+                        "🔑 API Key",
+                        type="password",
+                        help="From https://developers.kite.trade/"
+                    )
+                    
+                    api_secret = st.text_input(
+                        "🔐 API Secret",
+                        type="password",
+                        help="Keep this secure!"
+                    )
+                    
+                    generate_btn = st.form_submit_button("🔗 Generate Login URL", type="primary")
+                    
+                    if generate_btn and api_key and api_secret:
+                        try:
+                            temp_kite = KiteConnect(api_key=api_key)
+                            login_url = temp_kite.login_url()
+                            
+                            st.session_state.temp_api_key = api_key
+                            st.session_state.temp_api_secret = api_secret
+                            st.session_state.login_url = login_url
+                            
+                            st.success("✅ Login URL generated!")
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"❌ Error: {e}")
+                
+                # Show login URL if generated
+                if 'login_url' in st.session_state:
+                    st.markdown("---")
+                    st.markdown("**Step 2: Login to Zerodha**")
+                    st.markdown(f"[🔗 Click here to login]({st.session_state.login_url})")
+                    
+                    st.warning("""
+                    After logging in, you'll be redirected to a URL like:
+                    `http://127.0.0.1/?request_token=XXXXXX&action=login`
+                    
+                    Copy the **request_token** from that URL.
+                    """)
+                    
+                    # Request token input
+                    with st.form("access_token_form"):
+                        request_token = st.text_input(
+                            "📋 Request Token",
+                            help="Paste the request_token from redirect URL"
+                        )
+                        
+                        generate_token_btn = st.form_submit_button(
+                            "🎫 Generate Access Token",
+                            type="primary"
+                        )
+                        
+                        if generate_token_btn and request_token:
+                            try:
+                                temp_kite = KiteConnect(api_key=st.session_state.temp_api_key)
+                                data = temp_kite.generate_session(
+                                    request_token,
+                                    api_secret=st.session_state.temp_api_secret
+                                )
+                                
+                                access_token = data["access_token"]
+                                
+                                st.session_state.new_access_token = access_token
+                                st.success("✅ Access Token Generated!")
+                                st.rerun()
+                                
+                            except Exception as e:
+                                st.error(f"❌ Token generation failed: {e}")
+                                st.info("""
+                                **Common issues:**
+                                - Wrong API secret
+                                - Request token already used
+                                - Request token expired (valid 5 minutes)
+                                
+                                Generate a new login URL and try again.
+                                """)
+                
+                # Show and save token
+                if 'new_access_token' in st.session_state:
+                    st.markdown("---")
+                    st.success("### 🎉 Token Generated Successfully!")
+                    
+                    st.code(st.session_state.new_access_token, language="text")
+                    
+                    col_a, col_b = st.columns(2)
+                    
+                    with col_a:
+                        if st.button("💾 Save & Connect", type="primary", use_container_width=True):
+                            try:
+                                # Create directory
+                                os.makedirs('.streamlit', exist_ok=True)
+                                
+                                # Save to secrets.toml
+                                secrets_content = f"""# Kite Connect Credentials
+# Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+# Valid until: 6:00 AM IST tomorrow
+
+KITE_API_KEY = "{st.session_state.temp_api_key}"
+KITE_ACCESS_TOKEN = "{st.session_state.new_access_token}"
+"""
+                                with open('.streamlit/secrets.toml', 'w') as f:
+                                    f.write(secrets_content)
+                                
+                                # Set environment variables
+                                os.environ['KITE_API_KEY'] = st.session_state.temp_api_key
+                                os.environ['KITE_ACCESS_TOKEN'] = st.session_state.new_access_token
+                                
+                                st.success("✅ Credentials saved!")
+                                
+                                # Connect
+                                engine.broker.connect()
+                                
+                                # Clear session
+                                for key in ['temp_api_key', 'temp_api_secret', 'login_url', 'new_access_token']:
+                                    if key in st.session_state:
+                                        del st.session_state[key]
+                                
+                                st.balloons()
+                                time.sleep(1)
+                                st.rerun()
+                                
+                            except Exception as e:
+                                st.error(f"❌ Save failed: {e}")
+                    
+                    with col_b:
+                        if st.button("🔄 Start Over", use_container_width=True):
+                            for key in ['temp_api_key', 'temp_api_secret', 'login_url', 'new_access_token']:
+                                if key in st.session_state:
+                                    del st.session_state[key]
+                            st.rerun()
+        
+        with col2:
+            st.markdown("#### 📊 Bot Configuration")
+            
+            # Trading parameters
+            with st.form("config_form"):
+                st.markdown("**Capital Management**")
+                new_capital = st.number_input(
+                    "Total Capital (₹)",
+                    min_value=100000,
+                    value=Config.TOTAL_CAPITAL,
+                    step=100000
+                )
+                
+                new_risk = st.slider(
+                    "Risk per Trade (%)",
+                    0.5, 5.0, Config.RISK_PER_TRADE * 100, 0.1
+                )
+                
+                st.markdown("**Position Limits**")
+                new_max_positions = st.slider(
+                    "Max Concurrent Positions",
+                    1, 20, Config.MAX_POSITIONS
+                )
+                
+                new_max_trades = st.slider(
+                    "Max Daily Trades",
+                    10, 100, Config.MAX_DAILY_TRADES, 5
+                )
+                
+                st.markdown("**AI Parameters**")
+                new_confidence = st.slider(
+                    "Min Confidence (%)",
+                    50, 95, int(Config.MIN_CONFIDENCE * 100), 5
+                )
+                
+                st.markdown("**Risk Management**")
+                new_atr_mult = st.slider(
+                    "ATR Multiplier",
+                    1.0, 5.0, Config.ATR_MULTIPLIER, 0.5
+                )
+                
+                new_rr_ratio = st.slider(
+                    "Risk:Reward Ratio",
+                    1.5, 5.0, Config.TAKE_PROFIT_RATIO, 0.5
+                )
+                
+                trailing_stop = st.checkbox(
+                    "Enable Trailing Stop",
+                    value=Config.TRAILING_STOP
+                )
+                
+                if st.form_submit_button("💾 Save Configuration", type="primary"):
+                    # Update config
+                    Config.TOTAL_CAPITAL = new_capital
+                    Config.RISK_PER_TRADE = new_risk / 100
+                    Config.MAX_POSITIONS = new_max_positions
+                    Config.MAX_DAILY_TRADES = new_max_trades
+                    Config.MIN_CONFIDENCE = new_confidence / 100
+                    Config.ATR_MULTIPLIER = new_atr_mult
+                    Config.TAKE_PROFIT_RATIO = new_rr_ratio
+                    Config.TRAILING_STOP = trailing_stop
+                    
+                    st.success("✅ Configuration saved!")
+                    st.rerun()
+            
+            # System info
+            st.markdown("---")
+            st.markdown("#### 📱 System Information")
+            
+            st.info(f"""
+            **Bot Status:** {'🟢 Running' if engine.running else '🔴 Stopped'}
+            **Mode:** {'💰 Live' if not engine.broker.demo_mode else '📈 Paper'}
+            **Kite:** {'🟢 Connected' if engine.broker.connected else '🔴 Disconnected'}
+            **WebSocket:** {'🟢 Active' if engine.broker.websocket_running else '🔴 Inactive'}
+            **Models Trained:** {len(engine.ai.models)}
+            **Stock Universe:** {len(StockUniverse.get_all_fno_stocks())} stocks
+            """)
+            
+            # Database stats
+            st.markdown("#### 💾 Database")
+            trade_count = len(engine.db.get_trades(1000))
+            st.metric("Total Trades in DB", trade_count)
+            
+            if st.button("🗑️ Clear Database (Danger)", type="secondary"):
+                confirm = st.checkbox("⚠️ I understand this will delete all trade history")
+                if confirm and st.button("Yes, Delete All Data"):
+                    try:
+                        conn = engine.db.conn
+                        cursor = conn.cursor()
+                        cursor.execute("DELETE FROM trades")
+                        cursor.execute("DELETE FROM positions")
+                        cursor.execute("DELETE FROM signals")
+                        conn.commit()
+                        st.success("✅ Database cleared!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error: {e}")
     
     # Footer
     st.markdown("---")
