@@ -26,22 +26,83 @@ import numpy as np
 from scipy import stats
 from scipy.signal import argrelextrema
 
-# Machine Learning
+# Machine Learning - Handle imports gracefully
+ML_AVAILABLE = True
 try:
     from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier
     from sklearn.preprocessing import StandardScaler, RobustScaler
     from sklearn.model_selection import TimeSeriesSplit, cross_val_score
     from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
     from sklearn.linear_model import LogisticRegression
+    from sklearn.base import BaseEstimator, ClassifierMixin
 except ImportError as e:
     print(f"Warning: scikit-learn import error: {e}")
+    ML_AVAILABLE = False
+    
     # Create dummy classes for missing imports
-    class RandomForestClassifier: pass
-    class GradientBoostingClassifier: pass
-    class VotingClassifier: pass
-    class StandardScaler: pass
-    class RobustScaler: pass
-    class LogisticRegression: pass
+    class BaseEstimator:
+        pass
+    
+    class ClassifierMixin:
+        pass
+    
+    class RandomForestClassifier(BaseEstimator, ClassifierMixin):
+        def __init__(self, **kwargs):
+            self.n_estimators = kwargs.get('n_estimators', 100)
+        def fit(self, X, y):
+            return self
+        def predict(self, X):
+            return np.zeros(len(X))
+        def predict_proba(self, X):
+            return np.ones((len(X), 3)) / 3
+    
+    class GradientBoostingClassifier(BaseEstimator, ClassifierMixin):
+        def __init__(self, **kwargs):
+            pass
+        def fit(self, X, y):
+            return self
+        def predict(self, X):
+            return np.zeros(len(X))
+        def predict_proba(self, X):
+            return np.ones((len(X), 3)) / 3
+    
+    class VotingClassifier(BaseEstimator, ClassifierMixin):
+        def __init__(self, estimators=None, voting='soft', n_jobs=-1):
+            self.estimators = estimators or []
+            self.voting = voting
+            self.n_jobs = n_jobs
+        def fit(self, X, y):
+            return self
+        def predict(self, X):
+            return np.zeros(len(X))
+        def predict_proba(self, X):
+            return np.ones((len(X), 3)) / 3
+    
+    class StandardScaler:
+        def fit(self, X):
+            return self
+        def transform(self, X):
+            return X
+        def fit_transform(self, X):
+            return X
+    
+    class RobustScaler:
+        def fit(self, X):
+            return self
+        def transform(self, X):
+            return X
+        def fit_transform(self, X):
+            return X
+    
+    class LogisticRegression(BaseEstimator, ClassifierMixin):
+        def __init__(self, **kwargs):
+            self.max_iter = kwargs.get('max_iter', 1000)
+        def fit(self, X, y):
+            return self
+        def predict(self, X):
+            return np.zeros(len(X))
+        def predict_proba(self, X):
+            return np.ones((len(X), 3)) / 3
 
 # Visualization
 import plotly.graph_objs as go
@@ -55,7 +116,6 @@ import streamlit.components.v1 as components
 
 # Database
 import sqlite3
-import json
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
@@ -63,7 +123,7 @@ pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 1000)
 
 # ============================================================================
-# STOCK UNIVERSE CLASS (ADDED TO FIX THE ERROR)
+# STOCK UNIVERSE CLASS
 # ============================================================================
 
 class StockUniverse:
@@ -109,7 +169,7 @@ class StockUniverse:
         ]
     
     @staticmethod
-    def get_universe():  # Added this method to fix the error
+    def get_universe():
         """Get trading universe (alias for get_trading_universe)"""
         return StockUniverse.get_trading_universe()
 
@@ -404,11 +464,18 @@ class BrokerManager:
     def connect(self):
         """Connect to broker API"""
         try:
+            # Try to import KiteConnect
             from kiteconnect import KiteConnect, KiteTicker
             
-            # Get credentials from Streamlit secrets
-            api_key = st.secrets.get("KITE_API_KEY", "")
-            access_token = st.secrets.get("KITE_ACCESS_TOKEN", "")
+            # Get credentials from Streamlit secrets or environment
+            api_key = st.secrets.get("KITE_API_KEY", "") if hasattr(st, 'secrets') else ""
+            access_token = st.secrets.get("KITE_ACCESS_TOKEN", "") if hasattr(st, 'secrets') else ""
+            
+            # Fallback to environment variables
+            if not api_key:
+                api_key = os.environ.get("KITE_API_KEY", "")
+            if not access_token:
+                access_token = os.environ.get("KITE_ACCESS_TOKEN", "")
             
             if api_key and access_token:
                 self.kite = KiteConnect(api_key=api_key)
@@ -423,6 +490,9 @@ class BrokerManager:
                 print("✅ Successfully connected to Kite Connect")
                 return True
                 
+        except ImportError:
+            print("⚠️ KiteConnect not installed. Running in demo mode.")
+            self.config.demo_mode = True
         except Exception as e:
             print(f"❌ Broker connection failed: {e}")
             self.connected = False
@@ -463,7 +533,7 @@ class BrokerManager:
                    trigger_price: float = None) -> dict:
         """Place an order"""
         
-        if self.config.paper_trading:
+        if self.config.paper_trading or self.config.demo_mode:
             # Paper trading - simulate order
             return self.simulate_order(symbol, direction, quantity, order_type, price, trigger_price)
         
@@ -526,8 +596,9 @@ class BrokerManager:
             except:
                 pass
         
-        # Fallback to random price for demo
-        return 1000 + (hash(symbol) % 10000) / 100
+        # Fallback to deterministic random price for demo
+        hash_value = abs(hash(symbol)) % 10000
+        return 1000 + (hash_value / 100)
     
     def get_historical_data(self, symbol: str, interval: str, 
                            from_date: datetime, to_date: datetime) -> pd.DataFrame:
@@ -597,10 +668,13 @@ class BrokerManager:
         
         # Generate synthetic price data
         n = len(dates)
-        np.random.seed(hash(symbol) % 10000)
+        
+        # Use consistent seed based on symbol
+        seed_value = abs(hash(symbol)) % 10000
+        np.random.seed(seed_value)
         
         # Base price based on symbol
-        base_price = 1000 + (hash(symbol) % 5000)
+        base_price = 1000 + (seed_value % 5000)
         
         # Random walk with drift
         returns = np.random.normal(0.0001, 0.015, n)
@@ -1016,90 +1090,101 @@ class AITradingModels:
     
     def train_ensemble_model(self, X, y, feature_cols, symbol: str):
         """Train ensemble model"""
-        try:
-            from sklearn.linear_model import LogisticRegression
-        except ImportError:
-            # Create dummy LogisticRegression if not available
-            class LogisticRegression:
-                def __init__(self, **kwargs):
-                    pass
-                def fit(self, X, y):
-                    return self
-                def predict(self, X):
-                    return np.zeros(len(X))
-                def predict_proba(self, X):
-                    return np.ones((len(X), 3)) / 3
-        
-        # Scale features
-        scaler = RobustScaler()
-        X_scaled = scaler.fit_transform(X)
-        
-        # Define models
-        models = [
-            ('rf', RandomForestClassifier(
-                n_estimators=100, max_depth=10, 
-                min_samples_split=5, random_state=42, n_jobs=-1
-            )),
-        ]
-        
-        # Try to import additional models
-        try:
-            from xgboost import XGBClassifier
-            models.append(('xgb', XGBClassifier(
-                n_estimators=100, max_depth=6,
-                learning_rate=0.1, random_state=42, n_jobs=-1
-            )))
-        except ImportError:
-            print("XGBoost not available, skipping...")
+        if not ML_AVAILABLE:
+            print("⚠️ scikit-learn not available. Using dummy model.")
+            # Create dummy model
+            self.models[symbol] = RandomForestClassifier()
+            self.scalers[symbol] = RobustScaler()
+            self.features[symbol] = feature_cols
+            self.model_performance[symbol] = {
+                'accuracy': 0.5,
+                'std': 0.1,
+                'last_trained': datetime.now()
+            }
+            return self.models[symbol]
         
         try:
-            from lightgbm import LGBMClassifier
-            models.append(('lgbm', LGBMClassifier(
-                n_estimators=100, max_depth=6,
-                learning_rate=0.1, random_state=42, n_jobs=-1
-            )))
-        except ImportError:
-            print("LightGBM not available, skipping...")
-        
-        models.append(('lr', LogisticRegression(
-            max_iter=1000, random_state=42, n_jobs=-1
-        )))
-        
-        # Create ensemble
-        ensemble = VotingClassifier(estimators=models, voting='soft', n_jobs=-1)
-        
-        # Time series cross-validation
-        tscv = TimeSeriesSplit(n_splits=3)
-        scores = []
-        
-        for train_idx, val_idx in tscv.split(X_scaled):
-            X_train, X_val = X_scaled[train_idx], X_scaled[val_idx]
-            y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
+            # Scale features
+            scaler = RobustScaler()
+            X_scaled = scaler.fit_transform(X)
             
-            ensemble.fit(X_train, y_train)
-            y_pred = ensemble.predict(X_val)
-            accuracy = accuracy_score(y_val, y_pred)
-            scores.append(accuracy)
-        
-        # Final training on all data
-        ensemble.fit(X_scaled, y)
-        
-        # Store model and scaler
-        self.models[symbol] = ensemble
-        self.scalers[symbol] = scaler
-        self.features[symbol] = feature_cols
-        
-        # Calculate and store performance
-        cv_scores = cross_val_score(ensemble, X_scaled, y, cv=tscv, scoring='accuracy')
-        self.model_performance[symbol] = {
-            'accuracy': np.mean(cv_scores),
-            'std': np.std(cv_scores),
-            'last_trained': datetime.now()
-        }
-        
-        print(f"✅ Model trained for {symbol}. CV Accuracy: {np.mean(scores):.3f} ± {np.std(scores):.3f}")
-        
-        return ensemble
+            # Define models
+            models = [
+                ('rf', RandomForestClassifier(
+                    n_estimators=100, max_depth=10, 
+                    min_samples_split=5, random_state=42, n_jobs=-1
+                )),
+            ]
+            
+            # Try to import additional models
+            try:
+                from xgboost import XGBClassifier
+                models.append(('xgb', XGBClassifier(
+                    n_estimators=100, max_depth=6,
+                    learning_rate=0.1, random_state=42, n_jobs=-1
+                )))
+            except ImportError:
+                print("XGBoost not available, skipping...")
+            
+            try:
+                from lightgbm import LGBMClassifier
+                models.append(('lgbm', LGBMClassifier(
+                    n_estimators=100, max_depth=6,
+                    learning_rate=0.1, random_state=42, n_jobs=-1
+                )))
+            except ImportError:
+                print("LightGBM not available, skipping...")
+            
+            models.append(('lr', LogisticRegression(
+                max_iter=1000, random_state=42, n_jobs=-1
+            )))
+            
+            # Create ensemble
+            ensemble = VotingClassifier(estimators=models, voting='soft', n_jobs=-1)
+            
+            # Time series cross-validation
+            tscv = TimeSeriesSplit(n_splits=3)
+            scores = []
+            
+            for train_idx, val_idx in tscv.split(X_scaled):
+                X_train, X_val = X_scaled[train_idx], X_scaled[val_idx]
+                y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
+                
+                ensemble.fit(X_train, y_train)
+                y_pred = ensemble.predict(X_val)
+                accuracy = accuracy_score(y_val, y_pred)
+                scores.append(accuracy)
+            
+            # Final training on all data
+            ensemble.fit(X_scaled, y)
+            
+            # Store model and scaler
+            self.models[symbol] = ensemble
+            self.scalers[symbol] = scaler
+            self.features[symbol] = feature_cols
+            
+            # Calculate and store performance
+            cv_scores = cross_val_score(ensemble, X_scaled, y, cv=tscv, scoring='accuracy')
+            self.model_performance[symbol] = {
+                'accuracy': np.mean(cv_scores),
+                'std': np.std(cv_scores),
+                'last_trained': datetime.now()
+            }
+            
+            print(f"✅ Model trained for {symbol}. CV Accuracy: {np.mean(scores):.3f} ± {np.std(scores):.3f}")
+            
+            return ensemble
+            
+        except Exception as e:
+            print(f"❌ Model training failed for {symbol}: {e}")
+            # Fallback to simple model
+            from sklearn.linear_model import LogisticRegression
+            model = LogisticRegression(max_iter=1000, random_state=42)
+            model.fit(X, y)
+            self.models[symbol] = model
+            self.scalers[symbol] = RobustScaler()
+            self.features[symbol] = feature_cols
+            return model
     
     def predict(self, df: pd.DataFrame, symbol: str):
         """Make prediction using trained model"""
@@ -1116,8 +1201,11 @@ class AITradingModels:
             # Get latest features
             latest = features_df[self.features[symbol]].iloc[-1:].values
             
-            # Scale features
-            scaled = self.scalers[symbol].transform(latest)
+            # Scale features if scaler exists
+            if symbol in self.scalers:
+                scaled = self.scalers[symbol].transform(latest)
+            else:
+                scaled = latest
             
             # Predict
             model = self.models[symbol]
