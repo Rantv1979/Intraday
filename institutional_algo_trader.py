@@ -967,6 +967,14 @@ def main():
     .loss {
         color: #FF5252;
     }
+    .status-running {
+        color: #00C853;
+        font-weight: bold;
+    }
+    .status-stopped {
+        color: #FF5252;
+        font-weight: bold;
+    }
     </style>
     """, unsafe_allow_html=True)
     
@@ -1075,24 +1083,27 @@ def main():
     
     with col1:
         st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-        st.metric("Total P&L", f"₹{st.session_state.trading_engine.metrics['total_pnl']:,.2f}")
+        total_pnl = st.session_state.trading_engine.metrics['total_pnl']
+        st.metric("Total P&L", f"₹{total_pnl:,.2f}")
         st.markdown('</div>', unsafe_allow_html=True)
     
     with col2:
         st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-        st.metric("Win Rate", f"{st.session_state.trading_engine.metrics['win_rate']:.1f}%")
+        win_rate = st.session_state.trading_engine.metrics['win_rate']
+        st.metric("Win Rate", f"{win_rate:.1f}%")
         st.markdown('</div>', unsafe_allow_html=True)
     
     with col3:
         st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-        st.metric("Active Positions", len(st.session_state.trading_engine.positions))
+        active_positions = len(st.session_state.trading_engine.positions)
+        st.metric("Active Positions", active_positions)
         st.markdown('</div>', unsafe_allow_html=True)
     
     with col4:
         st.markdown('<div class="metric-card">', unsafe_allow_html=True)
         status = "Running" if st.session_state.trading_engine.is_running else "Stopped"
-        color = "green" if st.session_state.trading_engine.is_running else "red"
-        st.metric("Status", status, delta=None, delta_color=color)
+        # FIXED: Remove delta_color parameter entirely
+        st.metric("Status", status)
         st.markdown('</div>', unsafe_allow_html=True)
     
     # Tabs
