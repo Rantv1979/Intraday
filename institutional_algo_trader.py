@@ -963,9 +963,38 @@ def main():
         padding: 1.2rem;
         border-radius: 15px;
         border-left: 5px solid #1E88E5;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        margin-bottom: 1rem;
+        text-align: center;
     }
-    .status-running { color: #00C853; }
-    .status-stopped { color: #FF5252; }
+    .metric-card h3 {
+        font-size: 0.9rem;
+        color: #888;
+        margin-bottom: 0.5rem;
+    }
+    .metric-card h2 {
+        font-size: 1.8rem;
+        color: #fff;
+        margin: 0.5rem 0;
+        font-weight: bold;
+    }
+    .metric-card p {
+        font-size: 1.2rem;
+        margin-top: 0.5rem;
+        font-weight: bold;
+    }
+    .status-running { 
+        color: #00C853;
+        animation: pulse 2s infinite;
+    }
+    .status-stopped { 
+        color: #FF5252; 
+    }
+    @keyframes pulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.7; }
+        100% { opacity: 1; }
+    }
     </style>
     """, unsafe_allow_html=True)
     
@@ -980,6 +1009,109 @@ def main():
     st.markdown("<h1 class='main-header'>🤖 AI ALGORITHMIC TRADING BOT</h1>", 
                 unsafe_allow_html=True)
     st.markdown("### Professional Trading System with Kite Connect Integration")
+    
+    # Market Mood Gauge - Indices Dashboard
+    st.markdown("---")
+    st.markdown("### 📊 Market Mood Gauge")
+    
+    col_idx1, col_idx2, col_idx3, col_idx4 = st.columns(4)
+    
+    # Fetch live indices prices
+    try:
+        if engine.broker.connected and engine.broker.kite:
+            # Fetch live data
+            indices_data = engine.broker.kite.quote([
+                "NSE:NIFTY 50",
+                "NSE:NIFTY BANK", 
+                "NSE:SENSEX"
+            ])
+            
+            # NIFTY 50
+            nifty_data = indices_data.get("NSE:NIFTY 50", {})
+            nifty_ltp = nifty_data.get('last_price', 0)
+            nifty_change = nifty_data.get('change', 0)
+            nifty_change_pct = (nifty_change / (nifty_ltp - nifty_change) * 100) if nifty_ltp else 0
+            
+            # BANK NIFTY
+            banknifty_data = indices_data.get("NSE:NIFTY BANK", {})
+            banknifty_ltp = banknifty_data.get('last_price', 0)
+            banknifty_change = banknifty_data.get('change', 0)
+            banknifty_change_pct = (banknifty_change / (banknifty_ltp - banknifty_change) * 100) if banknifty_ltp else 0
+            
+            # SENSEX
+            sensex_data = indices_data.get("NSE:SENSEX", {})
+            sensex_ltp = sensex_data.get('last_price', 0)
+            sensex_change = sensex_data.get('change', 0)
+            sensex_change_pct = (sensex_change / (sensex_ltp - sensex_change) * 100) if sensex_ltp else 0
+            
+            # Calculate overall market mood
+            avg_change = (nifty_change_pct + banknifty_change_pct + sensex_change_pct) / 3
+            
+            if avg_change > 0.5:
+                mood = "🟢 BULLISH"
+                mood_color = "#00C853"
+            elif avg_change < -0.5:
+                mood = "🔴 BEARISH"
+                mood_color = "#FF5252"
+            else:
+                mood = "🟡 NEUTRAL"
+                mood_color = "#FFC107"
+                
+        else:
+            # Demo data
+            nifty_ltp = 24350.50
+            nifty_change_pct = 0.45
+            banknifty_ltp = 52180.75
+            banknifty_change_pct = 0.28
+            sensex_ltp = 80456.25
+            sensex_change_pct = 0.38
+            mood = "🟢 BULLISH"
+            mood_color = "#00C853"
+    
+    except Exception as e:
+        # Demo data on error
+        nifty_ltp = 24350.50
+        nifty_change_pct = 0.45
+        banknifty_ltp = 52180.75
+        banknifty_change_pct = 0.28
+        sensex_ltp = 80456.25
+        sensex_change_pct = 0.38
+        mood = "🟡 DEMO MODE"
+        mood_color = "#FFC107"
+    
+    # Display indices
+    with col_idx1:
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+        change_color = "status-running" if nifty_change_pct >= 0 else "status-stopped"
+        st.markdown(f'<h3>NIFTY 50</h3>', unsafe_allow_html=True)
+        st.markdown(f'<h2>{nifty_ltp:,.2f}</h2>', unsafe_allow_html=True)
+        st.markdown(f'<p class="{change_color}">{nifty_change_pct:+.2f}%</p>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col_idx2:
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+        change_color = "status-running" if banknifty_change_pct >= 0 else "status-stopped"
+        st.markdown(f'<h3>BANK NIFTY</h3>', unsafe_allow_html=True)
+        st.markdown(f'<h2>{banknifty_ltp:,.2f}</h2>', unsafe_allow_html=True)
+        st.markdown(f'<p class="{change_color}">{banknifty_change_pct:+.2f}%</p>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col_idx3:
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+        change_color = "status-running" if sensex_change_pct >= 0 else "status-stopped"
+        st.markdown(f'<h3>SENSEX</h3>', unsafe_allow_html=True)
+        st.markdown(f'<h2>{sensex_ltp:,.2f}</h2>', unsafe_allow_html=True)
+        st.markdown(f'<p class="{change_color}">{sensex_change_pct:+.2f}%</p>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col_idx4:
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+        st.markdown(f'<h3>MARKET MOOD</h3>', unsafe_allow_html=True)
+        st.markdown(f'<h2 style="color: {mood_color}">{mood}</h2>', unsafe_allow_html=True)
+        st.markdown(f'<p>Live Market Status</p>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    st.markdown("---")
     
     # Sidebar
     with st.sidebar:
