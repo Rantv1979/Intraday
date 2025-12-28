@@ -1,0 +1,2 @@
+# Intraday
+NSE_Stocks
