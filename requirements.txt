@@ -1,27 +1,3 @@
-# Core dependencies
-pandas>=2.0.0
-numpy>=1.24.0
-scipy>=1.10.0
-pytz>=2023.0
-
-# Machine Learning
-scikit-learn>=1.3.0
-# Optional: xgboost>=1.7.0
-# Optional: lightgbm>=4.0.0
-
-# Visualization
-plotly>=5.15.0
-matplotlib>=3.7.0
-seaborn>=0.12.0
-
-# Streamlit
-streamlit>=1.28.0
-
-# Database
-sqlite3
-
-# Broker Integration (Optional for live trading)
-# kiteconnect>=4.0.0
 # Core Requirements - MANDATORY
 streamlit>=1.28.0
 pandas>=2.0.0
