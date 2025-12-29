@@ -1185,7 +1185,53 @@ def main():
         
         st.markdown("---")
         
+        # Real-Time Status Panel
+        st.markdown("### 🤖 BOT STATUS")
+        status_running = "✅ Active" if engine.running else "🔴 Stopped"
+        mode_icon = "💰 Live" if not engine.broker.demo_mode else "📈 Paper"
+        kite_status = "🟢 Connected" if engine.broker.connected else "🔴 Demo"
+        
+        st.markdown(f"""
+        **Status:** {status_running}  
+        **Mode:** {mode_icon}  
+        **Kite:** {kite_status}  
+        **Capital:** ₹{Config.TOTAL_CAPITAL:,.0f}  
+        **Risk/Trade:** {Config.RISK_PER_TRADE:.2%}
+        """)
+        
+        st.markdown("---")
+        st.markdown("### 🧠 AI ENGINE")
+        models_count = len(engine.ai.models)
+        st.markdown(f"""
+        **Models Trained:** {models_count}  
+        **Confidence:** {Config.MIN_CONFIDENCE:.0%}  
+        **Scanning:** Every 10s  
+        **WebSocket:** {'🟢 Active' if engine.broker.websocket_running else '🔴 Inactive'}
+        """)
+        
+        st.markdown("---")
+        st.markdown("### 📊 TODAY'S STATS")
+        st.markdown(f"""
+        **Trades:** {engine.stats['total_trades']}  
+        **Win Rate:** {engine.stats['win_rate']:.1f}%  
+        **P&L:** ₹{engine.stats['total_pnl']:,.0f}  
+        **Open Positions:** {len(engine.risk.positions)}/{Config.MAX_POSITIONS}
+        """)
+        
+        st.markdown("---")
+        st.markdown("### 🔍 LAST ACTIVITY")
+        current_time = datetime.now().strftime("%H:%M:%S")
+        signals_count = engine.signals_queue.qsize()
+        st.markdown(f"""
+        **Time:** {current_time}  
+        **Signals Queue:** {signals_count}  
+        **Daily Trades:** {engine.risk.daily_trades}/{Config.MAX_DAILY_TRADES}
+        """)
+        
+        st.markdown("---")
+        
         # Mode
+        st.markdown("### ⚙️ QUICK SETTINGS")
         mode = st.radio("Trading Mode", 
                        ["📈 Paper Trading", "💰 Live Trading"], 
                        index=0)
@@ -1194,23 +1240,26 @@ def main():
         # Capital
         capital = st.number_input("Capital (₹)", 
                                  min_value=100000, 
-                                 value=2000000, 
+                                 value=Config.TOTAL_CAPITAL, 
                                  step=100000)
         Config.TOTAL_CAPITAL = capital
         
         # Risk
-        risk = st.slider("Risk per Trade (%)", 0.5, 5.0, 1.0, 0.1) / 100
+        risk = st.slider("Risk per Trade (%)", 0.5, 5.0, Config.RISK_PER_TRADE * 100, 0.1) / 100
         Config.RISK_PER_TRADE = risk
         
         # Confidence
-        confidence = st.slider("Min Confidence (%)", 50, 90, 70, 5) / 100
+        confidence = st.slider("Min Confidence (%)", 50, 90, int(Config.MIN_CONFIDENCE * 100), 5) / 100
         Config.MIN_CONFIDENCE = confidence
         
         st.markdown("---")
-        st.markdown("### 📊 Stock Universe")
-        st.info(f"Total F&O Stocks: {len(StockUniverse.get_all_fno_stocks())}")
+        st.markdown("### 📚 Stock Universe")
+        total_stocks = len(StockUniverse.get_all_fno_stocks())
+        st.info(f"**Total F&O Stocks:** {total_stocks}")
+        st.info(f"**Scanning Top:** 50 stocks")
         
         # Auto refresh
+        st.markdown("---")
         auto_refresh = st.checkbox("🔄 Auto Refresh", value=True)
         if auto_refresh:
             refresh_rate = st.slider("Refresh (seconds)", 5, 60, 10)
