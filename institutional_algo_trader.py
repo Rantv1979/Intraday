@@ -1762,7 +1762,8 @@ KITE_ACCESS_TOKEN = "{st.session_state.new_access_token}"
                         st.write(f"- API Key: `{api_key[:4]}...{api_key[-4:]}` ({len(api_key)} chars)")
                         st.write(f"- Access Token: `{token[:4]}...{token[-4:]}` ({len(token)} chars)")
                     except:
-                        st.error("Error reading secrets")
+                        st.error("Error readin
+                        g secrets")
                 
                 if st.button("🔄 Force Reconnect", key="force_reconnect"):
                     with st.spinner("Forcing reconnection..."):
