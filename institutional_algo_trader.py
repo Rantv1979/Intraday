@@ -271,20 +271,35 @@ class KiteBroker:
         """Connect to Kite with proper error handling"""
         try:
             # Try multiple ways to get credentials
-            api_key = os.getenv('KITE_API_KEY') or st.secrets.get("KITE_API_KEY", "") if hasattr(st, 'secrets') else ""
-            access_token = os.getenv('KITE_ACCESS_TOKEN') or st.secrets.get("KITE_ACCESS_TOKEN", "") if hasattr(st, 'secrets') else ""
+            # 1. Session state (temporary)
+            if 'kite_api_key' in st.session_state and 'kite_access_token' in st.session_state:
+                api_key = st.session_state.kite_api_key
+                access_token = st.session_state.kite_access_token
+            # 2. Streamlit secrets
+            elif hasattr(st, 'secrets') and 'KITE_API_KEY' in st.secrets:
+                api_key = st.secrets.get("KITE_API_KEY", "")
+                access_token = st.secrets.get("KITE_ACCESS_TOKEN", "")
+            # 3. Environment variables
+            else:
+                api_key = os.getenv('KITE_API_KEY', '')
+                access_token = os.getenv('KITE_ACCESS_TOKEN', '')
             
             if not api_key or not access_token:
-                st.warning("⚠️ Kite credentials not found. Add to .streamlit/secrets.toml or environment variables")
+                st.warning("⚠️ Kite credentials not found")
                 st.info("""
                 **Setup Instructions:**
-                1. Create `.streamlit/secrets.toml` file
-                2. Add:
+                
+                **For Streamlit Cloud:**
+                1. Go to App Settings (⚙️)
+                2. Click on "Secrets" 
+                3. Add your credentials:
                    ```
                    KITE_API_KEY = "your_api_key"
                    KITE_ACCESS_TOKEN = "your_access_token"
                    ```
-                OR set environment variables before running
+                4. Save and reboot
+                
+                **OR** use the token generator in ⚙️ Settings tab for temporary connection.
                 """)
                 self.demo_mode = True
                 return False
@@ -1565,7 +1580,7 @@ def main():
                                 access_token = data["access_token"]
                                 
                                 st.session_state.new_access_token = access_token
-                                st.success("✅ Access Token Generated!")
+                                st.success("✅ Access Token Generated Successfully!")
                                 st.rerun()
                                 
                             except Exception as e:
@@ -1576,7 +1591,7 @@ def main():
                                 - Request token already used
                                 - Request token expired (valid 5 minutes)
                                 
-                                Generate a new login URL and try again.
+                                Click "Start Over" and try again.
                                 """)
                 
                 # Show and save token
