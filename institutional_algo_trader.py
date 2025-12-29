@@ -1,14 +1,14 @@
 """
 PROFESSIONAL AI ALGORITHMIC TRADING BOT
 Complete Kite Connect Integration - Production Ready
-Version: 4.0.1 - Fixed Credential Handling
+Version: 4.0.0
 
 INSTALLATION INSTRUCTIONS:
 ==========================
 1. Install required packages:
-   pip install streamlit pandas numpy scipy scikit-learn plotly kiteconnect
+   pip install streamlit pandas numpy scipy scikit-learn plotly kiteconnect ta-lib
 
-2. Set environment variables (optional):
+2. Set environment variables:
    export KITE_API_KEY="your_api_key"
    export KITE_ACCESS_TOKEN="your_access_token"
 
@@ -25,8 +25,6 @@ FEATURES:
 ✅ Real-time Trade Execution
 ✅ Live Charts & Analytics
 ✅ Sequential Execution (Wait for close before next)
-✅ Fixed: Cloud-compatible credential storage
-✅ Fixed: Session-based authentication
 """
 
 import streamlit as st
@@ -105,11 +103,11 @@ class StockUniverse:
     def get_all_fno_stocks():
         """All 150+ F&O stocks"""
         return [
-            # Nifty 50
+            # Nifty 50 - CORRECTED SYMBOLS
             'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK', 'HINDUNILVR',
             'ITC', 'SBIN', 'BHARTIARTL', 'KOTAKBANK', 'BAJFINANCE', 'WIPRO',
             'AXISBANK', 'LT', 'HCLTECH', 'ASIANPAINT', 'MARUTI', 'SUNPHARMA',
-            'TITAN', 'ULTRACEMCO', 'TATAMOTORS', 'NTPC', 'ONGC', 'POWERGRID',
+            'TITAN', 'ULTRACEMCO', 'M&M', 'NTPC', 'ONGC', 'POWERGRID',  # Changed TATAMOTORS to M&M
             'NESTLEIND', 'TATASTEEL', 'JSWSTEEL', 'ADANIPORTS', 'TECHM',
             'BAJAJFINSV', 'BRITANNIA', 'GRASIM', 'DIVISLAB', 'DRREDDY',
             'SHREECEM', 'HDFCLIFE', 'SBILIFE', 'BPCL', 'IOC', 'COALINDIA',
@@ -121,20 +119,20 @@ class StockUniverse:
             'DABUR', 'BOSCHLTD', 'BANDHANBNK', 'DLF', 'BERGEPAINT',
             'COLPAL', 'GAIL', 'PIDILITIND', 'SIEMENS', 'VEDL',
             'HINDPETRO', 'TATAPOWER', 'PNB', 'LUPIN', 'NMDC',
-            'TORNTPHARM', 'OFSS', 'ICICIPRULI', 'MCDOWELL-N', 'INDIGO',
+            'TORNTPHARM', 'OFSS', 'ICICIPRULI', 'UBL', 'INDIGO',  # Removed MCDOWELL-N, added UBL
             'MARICO', 'MPHASIS', 'ADANIPOWER', 'AUROPHARMA', 'BANKBARODA',
             'LTIM', 'TRENT', 'ZYDUSLIFE', 'DMART', 'NAUKRI',
             
-            # Additional Liquid F&O Stocks
+            # Additional Liquid F&O Stocks - VERIFIED
             'BALKRISIND', 'BATAINDIA', 'BEL', 'CANBK', 'ESCORTS',
-            'GMRINFRA', 'JINDALSTEL', 'MANAPPURAM', 'SRTRANSFIN', 'ACC',
+            'JINDALSTEL', 'MANAPPURAM', 'SRTRANSFIN', 'ACC',  # Removed GMRINFRA
             'ASHOKLEY', 'ASTRAL', 'CUMMINSIND', 'DIXON', 'EXIDEIND',
             'FEDERALBNK', 'GODREJPROP', 'IDFCFIRSTB', 'IEX', 'IGL',
             'INDHOTEL', 'INDUSTOWER', 'JUBLFOOD', 'LAURUSLABS', 'LICHSGFIN',
             'MRF', 'MFSL', 'NATIONALUM', 'PAGEIND', 'PERSISTENT',
             'PFC', 'PIIND', 'RBLBANK', 'RECLTD', 'SAIL',
             'SUNTV', 'TATACHEM', 'TATACOMM', 'TATAELXSI', 'TORNTPOWER',
-            'TVSMOTOR', 'UBL', 'UNIONBANK', 'VOLTAS', 'ZEEL',
+            'TVSMOTOR', 'UNIONBANK', 'VOLTAS', 'ZEEL',  # Removed duplicate UBL
             'AUBANK', 'ABFRL', 'CHOLAFIN', 'COFORGE', 'CROMPTON',
             'DEEPAKNTR', 'HFCL', 'IDEA', 'IRCTC', 'M&MFIN',
             'METROPOLIS', 'OBEROIRLTY', 'PETRONET', 'POLYCAB', 'SBICARD',
@@ -272,49 +270,34 @@ class KiteBroker:
     def connect(self):
         """Connect to Kite with proper error handling"""
         try:
-            api_key = None
-            access_token = None
-            
-            # Try multiple ways to get credentials (in priority order)
-            # 1. Session state (temporary - highest priority)
+            # Try multiple ways to get credentials
+            # 1. Session state (temporary)
             if 'kite_api_key' in st.session_state and 'kite_access_token' in st.session_state:
                 api_key = st.session_state.kite_api_key
                 access_token = st.session_state.kite_access_token
-            
             # 2. Streamlit secrets
-            if not api_key:
-                try:
-                    if hasattr(st, 'secrets'):
-                        api_key = st.secrets.get("KITE_API_KEY", "")
-                        access_token = st.secrets.get("KITE_ACCESS_TOKEN", "")
-                except:
-                    pass
-            
+            elif hasattr(st, 'secrets') and 'KITE_API_KEY' in st.secrets:
+                api_key = st.secrets.get("KITE_API_KEY", "")
+                access_token = st.secrets.get("KITE_ACCESS_TOKEN", "")
             # 3. Environment variables
-            if not api_key:
+            else:
                 api_key = os.getenv('KITE_API_KEY', '')
                 access_token = os.getenv('KITE_ACCESS_TOKEN', '')
             
-            # Clean up credentials (remove quotes/whitespace)
-            if api_key:
-                api_key = api_key.strip().strip('"').strip("'")
-            if access_token:
-                access_token = access_token.strip().strip('"').strip("'")
-            
-            if not api_key or not access_token or len(api_key) < 10 or len(access_token) < 10:
-                st.warning("⚠️ Kite credentials not found or invalid")
+            if not api_key or not access_token:
+                st.warning("⚠️ Kite credentials not found")
                 st.info("""
                 **Setup Instructions:**
                 
                 **For Streamlit Cloud:**
                 1. Go to App Settings (⚙️)
                 2. Click on "Secrets" 
-                3. Add your credentials (without quotes):
+                3. Add your credentials:
                    ```
-                   KITE_API_KEY = "your_api_key_here"
-                   KITE_ACCESS_TOKEN = "your_access_token_here"
+                   KITE_API_KEY = "your_api_key"
+                   KITE_ACCESS_TOKEN = "your_access_token"
                    ```
-                4. Save and reboot app
+                4. Save and reboot
                 
                 **OR** use the token generator in ⚙️ Settings tab for temporary connection.
                 """)
@@ -341,7 +324,19 @@ class KiteBroker:
             
         except Exception as e:
             st.error(f"❌ Kite Connection Failed: {str(e)}")
-            st.info("Running in DEMO mode. To enable live trading, use the token generator in Settings tab.")
+            st.info("Running in DEMO mode. To enable live trading:")
+            st.code("""
+# On Linux/Mac:
+export KITE_API_KEY="your_key"
+export KITE_ACCESS_TOKEN="your_token"
+
+# On Windows:
+set KITE_API_KEY=your_key
+set KITE_ACCESS_TOKEN=your_token
+
+# Then run:
+streamlit run institutional_algo_trader.py
+            """)
             self.demo_mode = True
             return False
     
@@ -386,14 +381,13 @@ class KiteBroker:
                 """On WebSocket connection"""
                 st.info("🔌 WebSocket connected for live data")
                 
-                # Subscribe to ALL F&O stocks for live data
+                # Subscribe to top 50 stocks for live data
                 tokens = []
-                for symbol in StockUniverse.get_all_fno_stocks():
+                for symbol in StockUniverse.get_all_fno_stocks()[:50]:
                     if symbol in self.instruments_dict:
                         tokens.append(self.instruments_dict[symbol]['token'])
                 
                 if tokens:
-                    # WebSocket can handle up to 3000 instruments
                     ws.subscribe(tokens)
                     ws.set_mode(ws.MODE_LTP, tokens)  # Get only LTP for efficiency
             
@@ -521,21 +515,6 @@ class KiteBroker:
         df['Volume'] = np.random.lognormal(10, 1, len(df)).astype(int)
         
         return df.fillna(method='bfill')
-    
-    def get_margins(self):
-        """Get account margins safely"""
-        if not self.connected or not self.kite:
-            return {'available': 0, 'used': 0}
-        
-        try:
-            margins = self.kite.margins()
-            equity = margins.get('equity', {})
-            return {
-                'available': equity.get('available', {}).get('live_balance', 0),
-                'used': equity.get('utilised', {}).get('debits', 0)
-            }
-        except Exception as e:
-            return {'available': 0, 'used': 0}
     
     def place_order(self, symbol, direction, quantity, price=None):
         """Place order"""
@@ -802,7 +781,7 @@ class TradingEngine:
     
     def scan_signals(self):
         """Scan for trading signals"""
-        stocks = StockUniverse.get_all_fno_stocks()  # Scan ALL F&O stocks
+        stocks = StockUniverse.get_all_fno_stocks()[:50]  # Scan top 50
         
         for symbol in stocks:
             try:
@@ -1186,53 +1165,7 @@ def main():
         
         st.markdown("---")
         
-        # Real-Time Status Panel
-        st.markdown("### 🤖 BOT STATUS")
-        status_running = "✅ Active" if engine.running else "🔴 Stopped"
-        mode_icon = "💰 Live" if not engine.broker.demo_mode else "📈 Paper"
-        kite_status = "🟢 Connected" if engine.broker.connected else "🔴 Demo"
-        
-        st.markdown(f"""
-        **Status:** {status_running}  
-        **Mode:** {mode_icon}  
-        **Kite:** {kite_status}  
-        **Capital:** ₹{Config.TOTAL_CAPITAL:,.0f}  
-        **Risk/Trade:** {Config.RISK_PER_TRADE:.2%}
-        """)
-        
-        st.markdown("---")
-        st.markdown("### 🧠 AI ENGINE")
-        models_count = len(engine.ai.models)
-        st.markdown(f"""
-        **Models Trained:** {models_count}  
-        **Confidence:** {Config.MIN_CONFIDENCE:.0%}  
-        **Scanning:** Every 10s  
-        **WebSocket:** {'🟢 Active' if engine.broker.websocket_running else '🔴 Inactive'}
-        """)
-        
-        st.markdown("---")
-        st.markdown("### 📊 TODAY'S STATS")
-        st.markdown(f"""
-        **Trades:** {engine.stats['total_trades']}  
-        **Win Rate:** {engine.stats['win_rate']:.1f}%  
-        **P&L:** ₹{engine.stats['total_pnl']:,.0f}  
-        **Open Positions:** {len(engine.risk.positions)}/{Config.MAX_POSITIONS}
-        """)
-        
-        st.markdown("---")
-        st.markdown("### 🔍 LAST ACTIVITY")
-        current_time = datetime.now().strftime("%H:%M:%S")
-        signals_count = engine.signals_queue.qsize()
-        st.markdown(f"""
-        **Time:** {current_time}  
-        **Signals Queue:** {signals_count}  
-        **Daily Trades:** {engine.risk.daily_trades}/{Config.MAX_DAILY_TRADES}
-        """)
-        
-        st.markdown("---")
-        
         # Mode
-        st.markdown("### ⚙️ QUICK SETTINGS")
         mode = st.radio("Trading Mode", 
                        ["📈 Paper Trading", "💰 Live Trading"], 
                        index=0)
@@ -1241,26 +1174,23 @@ def main():
         # Capital
         capital = st.number_input("Capital (₹)", 
                                  min_value=100000, 
-                                 value=Config.TOTAL_CAPITAL, 
+                                 value=2000000, 
                                  step=100000)
         Config.TOTAL_CAPITAL = capital
         
         # Risk
-        risk = st.slider("Risk per Trade (%)", 0.5, 5.0, Config.RISK_PER_TRADE * 100, 0.1) / 100
+        risk = st.slider("Risk per Trade (%)", 0.5, 5.0, 1.0, 0.1) / 100
         Config.RISK_PER_TRADE = risk
         
         # Confidence
-        confidence = st.slider("Min Confidence (%)", 50, 90, int(Config.MIN_CONFIDENCE * 100), 5) / 100
+        confidence = st.slider("Min Confidence (%)", 50, 90, 70, 5) / 100
         Config.MIN_CONFIDENCE = confidence
         
         st.markdown("---")
-        st.markdown("### 📚 Stock Universe")
-        total_stocks = len(StockUniverse.get_all_fno_stocks())
-        st.info(f"**Total F&O Stocks:** {total_stocks}")
-        st.info(f"**Scanning:** ALL {total_stocks} stocks")
+        st.markdown("### 📊 Stock Universe")
+        st.info(f"Total F&O Stocks: {len(StockUniverse.get_all_fno_stocks())}")
         
         # Auto refresh
-        st.markdown("---")
         auto_refresh = st.checkbox("🔄 Auto Refresh", value=True)
         if auto_refresh:
             refresh_rate = st.slider("Refresh (seconds)", 5, 60, 10)
@@ -1348,7 +1278,7 @@ def main():
             df_signals['confidence'] = df_signals['confidence'].apply(lambda x: f"{x:.1%}")
             st.dataframe(df_signals, use_container_width=True)
         else:
-            st.info("🔭 No pending signals")
+            st.info("📭 No pending signals")
         
         # AI Model Status
         st.markdown("#### 🧠 AI Model Status")
@@ -1390,7 +1320,7 @@ def main():
                         engine.exit_position(row['symbol'], price, 'MANUAL')
                         st.rerun()
         else:
-            st.info("🔭 No active positions")
+            st.info("📭 No active positions")
     
     with tab3:
         st.markdown("### 📋 Trade History")
@@ -1413,7 +1343,7 @@ def main():
                 "text/csv"
             )
         else:
-            st.info("🔭 No trade history")
+            st.info("📭 No trade history")
     
     with tab4:
         st.markdown("### 📊 Live Charts")
@@ -1694,37 +1624,30 @@ def main():
                     with col_a:
                         if st.button("💾 Save & Connect", type="primary", use_container_width=True):
                             try:
-                                # Save to session state (works in Streamlit Cloud)
-                                st.session_state.kite_api_key = st.session_state.temp_api_key
-                                st.session_state.kite_access_token = st.session_state.new_access_token
+                                # Create directory
+                                os.makedirs('.streamlit', exist_ok=True)
                                 
-                                st.success("✅ Credentials saved to session!")
-                                st.info("⚠️ Note: These credentials will be active only for this session.")
-                                
-                                # Try to save to file (may fail in cloud)
-                                try:
-                                    os.makedirs('.streamlit', exist_ok=True)
-                                    secrets_content = f"""# Kite Connect Credentials
+                                # Save to secrets.toml
+                                secrets_content = f"""# Kite Connect Credentials
 # Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 # Valid until: 6:00 AM IST tomorrow
 
 KITE_API_KEY = "{st.session_state.temp_api_key}"
 KITE_ACCESS_TOKEN = "{st.session_state.new_access_token}"
 """
-                                    with open('.streamlit/secrets.toml', 'w') as f:
-                                        f.write(secrets_content)
-                                    st.success("✅ Also saved to secrets.toml file!")
-                                except Exception as e:
-                                    st.warning(f"⚠️ Could not save to file (read-only filesystem). Using session storage only.")
+                                with open('.streamlit/secrets.toml', 'w') as f:
+                                    f.write(secrets_content)
                                 
-                                # Set environment variables (for current session)
+                                # Set environment variables
                                 os.environ['KITE_API_KEY'] = st.session_state.temp_api_key
                                 os.environ['KITE_ACCESS_TOKEN'] = st.session_state.new_access_token
+                                
+                                st.success("✅ Credentials saved!")
                                 
                                 # Connect
                                 engine.broker.connect()
                                 
-                                # Clear temporary session variables
+                                # Clear session
                                 for key in ['temp_api_key', 'temp_api_secret', 'login_url', 'new_access_token']:
                                     if key in st.session_state:
                                         del st.session_state[key]
@@ -1735,7 +1658,6 @@ KITE_ACCESS_TOKEN = "{st.session_state.new_access_token}"
                                 
                             except Exception as e:
                                 st.error(f"❌ Save failed: {e}")
-                                st.info("Credentials saved to session. You can still use the bot for this session.")
                     
                     with col_b:
                         if st.button("🔄 Start Over", use_container_width=True):
@@ -1825,59 +1747,32 @@ KITE_ACCESS_TOKEN = "{st.session_state.new_access_token}"
             # Debug credentials status
             with st.expander("🔍 Debug: Credentials Status"):
                 has_session = 'kite_api_key' in st.session_state and 'kite_access_token' in st.session_state
-                has_secrets = False
+                has_secrets = hasattr(st, 'secrets') and 'KITE_API_KEY' in st.secrets
                 has_env = bool(os.getenv('KITE_API_KEY')) and bool(os.getenv('KITE_ACCESS_TOKEN'))
-                
-                try:
-                    if hasattr(st, 'secrets') and 'KITE_API_KEY' in st.secrets:
-                        has_secrets = True
-                except:
-                    pass
                 
                 st.write("**Credential Sources:**")
                 st.write(f"- Session State: {'✅ Found' if has_session else '❌ Not found'}")
                 st.write(f"- Streamlit Secrets: {'✅ Found' if has_secrets else '❌ Not found'}")
                 st.write(f"- Environment Variables: {'✅ Found' if has_env else '❌ Not found'}")
                 
-                # Show which credentials are being used
-                if has_session:
-                    try:
-                        api_key = st.session_state.get("kite_api_key", "")
-                        token = st.session_state.get("kite_access_token", "")
-                        if api_key and token:
-                            st.write(f"- API Key: `{api_key[:4]}...{api_key[-4:]}` ({len(api_key)} chars)")
-                            st.write(f"- Access Token: `{token[:4]}...{token[-4:]}` ({len(token)} chars)")
-                    except:
-                        pass
-                
-                elif has_secrets:
+                if has_secrets:
                     try:
                         api_key = st.secrets.get("KITE_API_KEY", "")
                         token = st.secrets.get("KITE_ACCESS_TOKEN", "")
-                        if api_key and token:
-                            st.write(f"- API Key: `{api_key[:4]}...{api_key[-4:]}` ({len(api_key)} chars)")
-                            st.write(f"- Access Token: `{token[:4]}...{token[-4:]}` ({len(token)} chars)")
-                    except:
-                        st.error("Error reading secrets")
-                
-                elif has_env:
-                    api_key = os.getenv('KITE_API_KEY', '')
-                    token = os.getenv('KITE_ACCESS_TOKEN', '')
-                    if api_key and token:
                         st.write(f"- API Key: `{api_key[:4]}...{api_key[-4:]}` ({len(api_key)} chars)")
                         st.write(f"- Access Token: `{token[:4]}...{token[-4:]}` ({len(token)} chars)")
+                    except:
+                        st.error("Error reading secrets")
                 
                 if st.button("🔄 Force Reconnect", key="force_reconnect"):
                     with st.spinner("Forcing reconnection..."):
                         engine.broker.connected = False
                         engine.broker.kite = None
-                        engine.broker.demo_mode = False
                         success = engine.broker.connect()
                         if success:
                             st.success("✅ Reconnected!")
                         else:
-                            st.error("❌ Connection failed - Check credentials")
-                    time.sleep(1)
+                            st.error("❌ Connection failed")
                     st.rerun()
             
             # Database stats
@@ -1905,7 +1800,7 @@ KITE_ACCESS_TOKEN = "{st.session_state.new_access_token}"
     st.markdown("""
     <div style='text-align: center; color: #666;'>
     <p>🚨 <b>DISCLAIMER:</b> For educational purposes only. Trading involves risk.</p>
-    <p>© 2025 AI Algo Trading Bot v4.0.1 | Complete Kite Connect Integration | Cloud Compatible</p>
+    <p>© 2025 AI Algo Trading Bot v4.0.0 | Complete Kite Connect Integration</p>
     </div>
     """, unsafe_allow_html=True)
 
