@@ -801,7 +801,7 @@ class TradingEngine:
     
     def scan_signals(self):
         """Scan for trading signals"""
-        stocks = StockUniverse.get_all_fno_stocks()[:50]  # Scan top 50
+        stocks = StockUniverse.get_all_fno_stocks()  # Scan ALL F&O stocks
         
         for symbol in stocks:
             try:
