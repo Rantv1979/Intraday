@@ -1256,7 +1256,7 @@ def main():
         st.markdown("### 📚 Stock Universe")
         total_stocks = len(StockUniverse.get_all_fno_stocks())
         st.info(f"**Total F&O Stocks:** {total_stocks}")
-        st.info(f"**Scanning Top:** 50 stocks")
+        st.info(f"**Scanning Top:** 159 stocks")
         
         # Auto refresh
         st.markdown("---")
