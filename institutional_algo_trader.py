@@ -1017,6 +1017,24 @@ def main():
     if 'engine' not in st.session_state:
         st.session_state.engine = TradingEngine(Config(), demo_mode=True)
         st.session_state.last_refresh = datetime.now()
+        
+        # Auto-connect to Kite if credentials are available
+        if not st.session_state.engine.broker.connected:
+            try:
+                # Check if secrets exist
+                has_secrets = False
+                if hasattr(st, 'secrets') and 'KITE_API_KEY' in st.secrets and 'KITE_ACCESS_TOKEN' in st.secrets:
+                    has_secrets = True
+                elif 'kite_api_key' in st.session_state and 'kite_access_token' in st.session_state:
+                    has_secrets = True
+                elif os.getenv('KITE_API_KEY') and os.getenv('KITE_ACCESS_TOKEN'):
+                    has_secrets = True
+                
+                if has_secrets:
+                    with st.spinner("🔌 Connecting to Kite..."):
+                        st.session_state.engine.broker.connect()
+            except Exception as e:
+                pass  # Silent fail, user can connect manually
     
     engine = st.session_state.engine
     
@@ -1725,6 +1743,37 @@ KITE_ACCESS_TOKEN = "{st.session_state.new_access_token}"
             **Models Trained:** {len(engine.ai.models)}
             **Stock Universe:** {len(StockUniverse.get_all_fno_stocks())} stocks
             """)
+            
+            # Debug credentials status
+            with st.expander("🔍 Debug: Credentials Status"):
+                has_session = 'kite_api_key' in st.session_state and 'kite_access_token' in st.session_state
+                has_secrets = hasattr(st, 'secrets') and 'KITE_API_KEY' in st.secrets
+                has_env = bool(os.getenv('KITE_API_KEY')) and bool(os.getenv('KITE_ACCESS_TOKEN'))
+                
+                st.write("**Credential Sources:**")
+                st.write(f"- Session State: {'✅ Found' if has_session else '❌ Not found'}")
+                st.write(f"- Streamlit Secrets: {'✅ Found' if has_secrets else '❌ Not found'}")
+                st.write(f"- Environment Variables: {'✅ Found' if has_env else '❌ Not found'}")
+                
+                if has_secrets:
+                    try:
+                        api_key = st.secrets.get("KITE_API_KEY", "")
+                        token = st.secrets.get("KITE_ACCESS_TOKEN", "")
+                        st.write(f"- API Key: `{api_key[:4]}...{api_key[-4:]}` ({len(api_key)} chars)")
+                        st.write(f"- Access Token: `{token[:4]}...{token[-4:]}` ({len(token)} chars)")
+                    except:
+                        st.error("Error reading secrets")
+                
+                if st.button("🔄 Force Reconnect", key="force_reconnect"):
+                    with st.spinner("Forcing reconnection..."):
+                        engine.broker.connected = False
+                        engine.broker.kite = None
+                        success = engine.broker.connect()
+                        if success:
+                            st.success("✅ Reconnected!")
+                        else:
+                            st.error("❌ Connection failed")
+                    st.rerun()
             
             # Database stats
             st.markdown("#### 💾 Database")
