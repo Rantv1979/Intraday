@@ -386,13 +386,14 @@ class KiteBroker:
                 """On WebSocket connection"""
                 st.info("🔌 WebSocket connected for live data")
                 
-                # Subscribe to top 50 stocks for live data
+                # Subscribe to ALL F&O stocks for live data
                 tokens = []
-                for symbol in StockUniverse.get_all_fno_stocks()[:50]:
+                for symbol in StockUniverse.get_all_fno_stocks():
                     if symbol in self.instruments_dict:
                         tokens.append(self.instruments_dict[symbol]['token'])
                 
                 if tokens:
+                    # WebSocket can handle up to 3000 instruments
                     ws.subscribe(tokens)
                     ws.set_mode(ws.MODE_LTP, tokens)  # Get only LTP for efficiency
             
@@ -1256,7 +1257,7 @@ def main():
         st.markdown("### 📚 Stock Universe")
         total_stocks = len(StockUniverse.get_all_fno_stocks())
         st.info(f"**Total F&O Stocks:** {total_stocks}")
-        st.info(f"**Scanning Top:** 159 stocks")
+        st.info(f"**Scanning:** ALL {total_stocks} stocks")
         
         # Auto refresh
         st.markdown("---")
