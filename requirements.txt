@@ -8,3 +8,6 @@ kiteconnect>=4.2.0
 python-dotenv>=1.0.0
 streamlit-autorefresh==1.0.1
 TA-Lib>=0.4.28
+XGBoost
+TextBlob
+yfinance
