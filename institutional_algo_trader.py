@@ -1719,20 +1719,32 @@ def main():
                     
                     with col_a:
                         if st.button("💾 Save & Connect", type="primary", use_container_width=True):
-                            try:
-                                # Store in session state (temporary, but works)
-                                st.session_state.kite_api_key = st.session_state.temp_api_key
-                                st.session_state.kite_access_token = st.session_state.new_access_token
-                                
-                                # Also try to save to environment (may fail in cloud)
-                                os.environ['KITE_API_KEY'] = st.session_state.temp_api_key
-                                os.environ['KITE_ACCESS_TOKEN'] = st.session_state.new_access_token
-                                
-                                st.success("✅ Credentials stored in session!")
-                                st.info("💡 Credentials saved for this session. For permanent storage, add to Streamlit Cloud secrets.")
-                                
-                                # Connect
-                                engine.broker.connect()
+                            # Store ONLY in session state (no file writes)
+                            st.session_state.kite_api_key = st.session_state.temp_api_key
+                            st.session_state.kite_access_token = st.session_state.new_access_token
+                            
+                            st.success("✅ Credentials stored in session!")
+                            st.info("""
+                            **Session Storage Active:**
+                            - Credentials valid for this browser session
+                            - Will expire when you close/refresh the page
+                            
+                            **For Permanent Storage:**
+                            Add to Streamlit Cloud Secrets:
+                            1. Go to App Settings → Secrets
+                            2. Add:
+                               ```
+                               KITE_API_KEY = "your_key"
+                               KITE_ACCESS_TOKEN = "your_token"
+                               ```
+                            """)
+                            
+                            # Connect to Kite
+                            with st.spinner("🔌 Connecting to Kite..."):
+                                success = engine.broker.connect()
+                            
+                            if success:
+                                st.success("✅ Successfully connected to Kite!")
                                 
                                 # Clear temp session data
                                 for key in ['temp_api_key', 'temp_api_secret', 'login_url', 'new_access_token']:
@@ -1742,10 +1754,8 @@ def main():
                                 st.balloons()
                                 time.sleep(1)
                                 st.rerun()
-                                
-                            except Exception as e:
-                                st.error(f"❌ Save failed: {e}")
-                                st.warning("Credentials stored in session but file save failed (expected in cloud)")
+                            else:
+                                st.error("❌ Connection failed. Check your credentials.")
                     
                     with col_b:
                         if st.button("🔄 Start Over", use_container_width=True):
