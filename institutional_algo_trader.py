@@ -354,7 +354,7 @@ class KiteBroker:
         except Exception as e:
             st.warning(f"⚠️ WebSocket setup failed: {e}")
     
-   def get_ltp(self, symbol):
+           def get_ltp(self, symbol):
     """Get last traded price - INTRADAY: Always try API first"""
     
     # PRIORITY 1: Try Kite API for fresh price
