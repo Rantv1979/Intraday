@@ -354,25 +354,26 @@ class KiteBroker:
         except Exception as e:
             st.warning(f"⚠️ WebSocket setup failed: {e}")
     
-    def get_ltp(self, symbol):
-        """Get last traded price"""
-        # Try cache first
-        if symbol in self.ltp_cache:
-            return self.ltp_cache[symbol]
-        
-        # Try Kite API
-        if self.connected and self.kite:
-            try:
-                quote = self.kite.ltp([f"NSE:{symbol}"])
-                price = quote[f"NSE:{symbol}"]['last_price']
-                self.ltp_cache[symbol] = price
-                return price
-            except:
-                pass
-        
-        # Fallback to demo price
-        hash_value = abs(hash(symbol)) % 10000
-        return 1000 + (hash_value / 100)
+   def get_ltp(self, symbol):
+    """Get last traded price - INTRADAY: Always try API first"""
+    
+    # PRIORITY 1: Try Kite API for fresh price
+    if self.connected and self.kite:
+        try:
+            quote = self.kite.ltp([f"NSE:{symbol}"])
+            price = quote[f"NSE:{symbol}"]['last_price']
+            self.ltp_cache[symbol] = price
+            return price
+        except:
+            pass
+    
+    # PRIORITY 2: WebSocket cache
+    if symbol in self.ltp_cache:
+        return self.ltp_cache[symbol]
+    
+    # PRIORITY 3: Demo fallback
+    hash_value = abs(hash(symbol)) % 10000
+    return 1000 + (hash_value / 100)
     
     def get_historical(self, symbol, days=30):
         """Get historical data"""
@@ -749,7 +750,18 @@ class TradingEngine:
                 if now < self.config.MARKET_OPEN or now > self.config.MARKET_CLOSE:
                     time.sleep(60)
                     continue
-                
+                # INTRADAY: Auto-exit at 3:20 PM
+            if now >= dt_time(15, 20):
+                if len(self.risk.positions) > 0:
+                    print("⏰ 3:20 PM - Auto-exiting all intraday positions")
+                    for symbol in list(self.risk.positions.keys()):
+                        try:
+                            current_price = self.broker.get_ltp(symbol)
+                            self.exit_position(symbol, current_price, 'INTRADAY_AUTO_EXIT')
+                        except Exception as e:
+                            print(f"Failed to exit {symbol}: {e}")
+                time.sleep(600)  # Wait 10 minutes after exit
+                continue
                 # Scan for signals every 30 seconds
                 if scan_counter % 3 == 0:
                     self.scan_signals()
@@ -1048,14 +1060,23 @@ def main():
     engine = st.session_state.engine
     indices = st.session_state.indices_updater
     
-    # AUTO REFRESH - FIXED VERSION
-    if st.session_state.get('refresh_enabled', True):
-        refresh_rate = st.session_state.get('refresh_rate', 10)
-        time_since_refresh = (datetime.now() - st.session_state.last_refresh).total_seconds()
+    # AUTO REFRESH - INTRADAY VERSION
+if st.session_state.get('refresh_enabled', True):
+    refresh_rate = st.session_state.get('refresh_rate', 5)  # 5 seconds default
+    time_since_refresh = (datetime.now() - st.session_state.last_refresh).total_seconds()
+    
+    if time_since_refresh >= refresh_rate:
+        # Update indices
+        indices.update()
         
-        if time_since_refresh >= refresh_rate:
-            indices.update()  # Update indices
-            st.session_state.last_refresh = datetime.now()
+        # CRITICAL: Clear LTP cache for fresh prices
+        engine.broker.ltp_cache.clear()
+        
+        # Update timestamp
+        st.session_state.last_refresh = datetime.now()
+        
+        # Auto-rerun on positions/analytics tabs
+        if st.session_state.get('active_tab', 0) in [1, 4]:
             st.rerun()
     
     # Header
@@ -1151,20 +1172,26 @@ def main():
         st.markdown("### 📊 Stock Universe")
         st.info(f"**Total F&O Stocks:** {len(StockUniverse.get_all_fno_stocks())}")
         
-        # Auto refresh settings
-        st.markdown("---")
-        auto_refresh = st.checkbox("🔄 Auto Refresh", value=True)
-        st.session_state.refresh_enabled = auto_refresh
-        
-        if auto_refresh:
-            refresh_rate = st.slider("Refresh Rate (sec)", 5, 60, 10)
-            st.session_state.refresh_rate = refresh_rate
-            
-            # Show countdown
-            time_since = (datetime.now() - st.session_state.last_refresh).total_seconds()
-            remaining = int(refresh_rate - time_since)
-            if remaining > 0:
-                st.info(f"⏳ Next refresh in {remaining}s")
+       # Auto refresh settings - INTRADAY
+st.markdown("---")
+st.markdown("### 🔄 Auto Refresh (Intraday)")
+
+auto_refresh = st.checkbox("🔄 Enable Auto Refresh", value=True)
+st.session_state.refresh_enabled = auto_refresh
+
+if auto_refresh:
+    # Faster refresh for intraday: 3-30 seconds
+    refresh_rate = st.slider("Refresh Rate (sec)", 3, 30, 5, 1)
+    st.session_state.refresh_rate = refresh_rate
+    
+    # Show countdown
+    time_since = (datetime.now() - st.session_state.last_refresh).total_seconds()
+    remaining = int(refresh_rate - time_since)
+    if remaining > 0:
+        st.info(f"⏳ Next refresh in {remaining}s")
+    
+    st.caption("💡 Lower = More updates | Higher = Less server load")
+    st.caption(f"🕐 Last refresh: {st.session_state.last_refresh.strftime('%H:%M:%S')}")
     
     # Top Metrics
     col1, col2, col3, col4 = st.columns(4)
@@ -1414,36 +1441,104 @@ def main():
         with col3:
             st.metric("Max Positions", Config.MAX_POSITIONS)
     
-    elif active_tab == 1:  # Positions
-        st.markdown("### 📈 Active Positions")
+    elif active_tab == 1:  # Positions - LIVE UPDATES
+    st.markdown("### 📈 Active Positions (Live Updates)")
+    
+    # Force refresh button
+    col_refresh1, col_refresh2 = st.columns([3, 1])
+    with col_refresh2:
+        if st.button("🔄 Force Refresh Now", key="force_refresh_pos"):
+            # Clear price cache
+            engine.broker.ltp_cache.clear()
+            st.rerun()
+    
+    positions_df = engine.db.get_open_positions()
+    
+    if not positions_df.empty:
+        # IMPORTANT: Create fresh copy
+        live_positions = positions_df.copy()
         
-        positions_df = engine.db.get_open_positions()
-        
-        if not positions_df.empty:
-            for idx, row in positions_df.iterrows():
+        # Update each position with LIVE prices
+        for idx, row in live_positions.iterrows():
+            try:
+                # Clear cache and get fresh price
+                if row['symbol'] in engine.broker.ltp_cache:
+                    del engine.broker.ltp_cache[row['symbol']]
+                
                 current_price = engine.broker.get_ltp(row['symbol'])
+                
+                # Calculate live P&L
                 if row['direction'] == 'LONG':
                     pnl = (current_price - row['entry_price']) * row['quantity']
                 else:
                     pnl = (row['entry_price'] - current_price) * row['quantity']
                 
-                positions_df.at[idx, 'current_price'] = current_price
-                positions_df.at[idx, 'pnl'] = pnl
-                positions_df.at[idx, 'pnl_pct'] = (pnl / (row['entry_price'] * row['quantity'])) * 100
-            
-            st.dataframe(positions_df, use_container_width=True)
-            
-            # Manual exit
-            st.markdown("#### 🛑 Manual Exit")
-            cols = st.columns(4)
-            for idx, (_, row) in enumerate(list(positions_df.iterrows())[:4]):
-                with cols[idx]:
-                    if st.button(f"Exit {row['symbol']}", key=f"exit_{row['symbol']}"):
-                        price = engine.broker.get_ltp(row['symbol'])
-                        engine.exit_position(row['symbol'], price, 'MANUAL')
-                        st.rerun()
-        else:
-            st.info("🔭 No active positions")
+                pnl_pct = (pnl / (row['entry_price'] * row['quantity'])) * 100
+                
+                # Update row
+                live_positions.at[idx, 'current_price'] = current_price
+                live_positions.at[idx, 'pnl'] = pnl
+                live_positions.at[idx, 'pnl_pct'] = pnl_pct
+                
+            except Exception as e:
+                live_positions.at[idx, 'current_price'] = row['entry_price']
+                live_positions.at[idx, 'pnl'] = 0
+                live_positions.at[idx, 'pnl_pct'] = 0
+        
+        # Show live timestamp
+        st.caption(f"🕐 Last updated: {datetime.now().strftime('%H:%M:%S')}")
+        
+        # Display table
+        st.dataframe(live_positions, use_container_width=True, height=400)
+        
+        # Summary
+        st.markdown("#### 📊 Position Summary")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        total_pnl = live_positions['pnl'].sum()
+        winning = len(live_positions[live_positions['pnl'] > 0])
+        
+        with col1:
+            st.metric("Total P&L", f"₹{total_pnl:,.0f}")
+        with col2:
+            st.metric("Winning", winning)
+        with col3:
+            st.metric("Losing", len(live_positions) - winning)
+        with col4:
+            st.metric("Total Positions", len(live_positions))
+        
+        # Manual exit
+        st.markdown("#### 🛑 Manual Exit")
+        cols = st.columns(min(4, len(live_positions)))
+        
+        for idx, (_, row) in enumerate(list(live_positions.iterrows())[:4]):
+            with cols[idx]:
+                pnl_color = "🟢" if row['pnl'] > 0 else "🔴"
+                if st.button(
+                    f"{pnl_color} {row['symbol']}\n₹{row['pnl']:,.0f}",
+                    key=f"exit_{row['symbol']}_{idx}",
+                    use_container_width=True
+                ):
+                    current_price = engine.broker.get_ltp(row['symbol'])
+                    engine.exit_position(row['symbol'], current_price, 'MANUAL')
+                    st.success(f"✅ Exited {row['symbol']}")
+                    time.sleep(0.5)
+                    st.rerun()
+        
+        # Exit all
+        st.markdown("---")
+        if st.button("🚨 EXIT ALL POSITIONS", type="secondary", use_container_width=True):
+            for _, row in live_positions.iterrows():
+                try:
+                    price = engine.broker.get_ltp(row['symbol'])
+                    engine.exit_position(row['symbol'], price, 'MANUAL_EXIT_ALL')
+                except:
+                    pass
+            st.success("✅ All positions exited!")
+            time.sleep(1)
+            st.rerun()
+    else:
+        st.info("🔭 No active positions")
     
     elif active_tab == 2:  # History
         st.markdown("### 📋 Trade History")
