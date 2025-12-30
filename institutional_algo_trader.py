@@ -82,7 +82,7 @@ class Config:
     MAX_DAILY_TRADES = 50
     
     # AI Parameters
-    MIN_CONFIDENCE = 0.70  # 70%
+    MIN_CONFIDENCE = 0.60  # 60% (lowered from 70% for more signals)
     
     # Risk Management
     ATR_MULTIPLIER = 2.0
@@ -1183,7 +1183,7 @@ def main():
         Config.RISK_PER_TRADE = risk
         
         # Confidence
-        confidence = st.slider("Min Confidence (%)", 50, 90, 70, 5) / 100
+        confidence = st.slider("Min Confidence (%)", 50, 90, 60, 5) / 100  # Default 60%
         Config.MIN_CONFIDENCE = confidence
         
         st.markdown("---")
@@ -1260,10 +1260,68 @@ def main():
     with tab1:
         st.markdown("### 🎯 AI Algorithm Trading Signals")
         
-        col1, col2 = st.columns([3, 1])
+        col1, col2, col3 = st.columns([2, 2, 1])
         with col1:
             scan_btn = st.button("🔍 Scan All 159 F&O Stocks", type="primary", use_container_width=True)
-            if scan_btn:
+        
+        with col2:
+            quick_test = st.button("⚡ Quick Test (10 Stocks)", type="secondary", use_container_width=True)
+        
+        with col3:
+            exec_btn = st.button("✅ Execute All", use_container_width=True)
+        
+        # Quick Test Scan (10 stocks only)
+        if quick_test:
+            with st.spinner("⚡ Quick test scanning 10 stocks..."):
+                # Clear previous signals
+                while not engine.signals_queue.empty():
+                    engine.signals_queue.get()
+                
+                test_stocks = StockUniverse.get_all_fno_stocks()[:10]
+                signals_found = 0
+                
+                for symbol in test_stocks:
+                    try:
+                        df = engine.broker.get_historical(symbol, days=30)
+                        if len(df) < 100:
+                            continue
+                        
+                        if symbol not in engine.ai.models:
+                            engine.ai.train_model(df, symbol)
+                        
+                        prediction, confidence = engine.ai.predict(df, symbol)
+                        
+                        if confidence >= Config.MIN_CONFIDENCE and prediction != 0:
+                            direction = 'LONG' if prediction == 1 else 'SHORT'
+                            current_price = engine.broker.get_ltp(symbol)
+                            stop_loss = engine.risk.calculate_stop_loss(df, direction)
+                            take_profit = engine.risk.calculate_take_profit(current_price, stop_loss, direction)
+                            quantity = engine.risk.calculate_position_size(current_price, stop_loss)
+                            
+                            signal = {
+                                'symbol': symbol,
+                                'direction': direction,
+                                'price': current_price,
+                                'stop_loss': stop_loss,
+                                'take_profit': take_profit,
+                                'quantity': quantity,
+                                'confidence': confidence,
+                                'timestamp': datetime.now()
+                            }
+                            engine.signals_queue.put(signal)
+                            signals_found += 1
+                    except:
+                        pass
+                
+                if signals_found > 0:
+                    st.success(f"✅ Found {signals_found} signals in test scan!")
+                else:
+                    st.warning("⚠️ No signals in test. Try lowering confidence threshold in sidebar.")
+                
+                st.rerun()
+        
+        # Full Scan
+        if scan_btn:
                 with st.spinner("🔍 Scanning all 159 F&O stocks..."):
                     progress_bar = st.progress(0)
                     status_text = st.empty()
@@ -1276,23 +1334,42 @@ def main():
                     stocks = StockUniverse.get_all_fno_stocks()
                     total = len(stocks)
                     
+                    # Detailed stats
+                    scan_stats = {
+                        'scanned': 0,
+                        'models_trained': 0,
+                        'predictions_made': 0,
+                        'signals_generated': 0,
+                        'skipped_insufficient_data': 0,
+                        'low_confidence': 0
+                    }
+                    
                     for idx, symbol in enumerate(stocks):
                         try:
                             progress = (idx + 1) / total
                             progress_bar.progress(progress)
-                            status_text.text(f"Scanning {symbol} ({idx+1}/{total})")
+                            status_text.text(f"Scanning {symbol} ({idx+1}/{total}) | Signals: {scan_stats['signals_generated']}")
+                            
+                            scan_stats['scanned'] += 1
                             
                             # Quick scan logic
                             df = engine.broker.get_historical(symbol, days=30)
                             if len(df) < 100:
+                                scan_stats['skipped_insufficient_data'] += 1
                                 continue
                             
                             if symbol not in engine.ai.models:
                                 engine.ai.train_model(df, symbol)
+                                scan_stats['models_trained'] += 1
                             
                             prediction, confidence = engine.ai.predict(df, symbol)
+                            scan_stats['predictions_made'] += 1
                             
-                            if confidence >= Config.MIN_CONFIDENCE and prediction != 0:
+                            if confidence < Config.MIN_CONFIDENCE:
+                                scan_stats['low_confidence'] += 1
+                                continue
+                            
+                            if prediction != 0:  # Skip HOLD signals
                                 direction = 'LONG' if prediction == 1 else 'SHORT'
                                 current_price = engine.broker.get_ltp(symbol)
                                 stop_loss = engine.risk.calculate_stop_loss(df, direction)
@@ -1310,12 +1387,35 @@ def main():
                                     'timestamp': datetime.now()
                                 }
                                 engine.signals_queue.put(signal)
-                        except:
+                                scan_stats['signals_generated'] += 1
+                        except Exception as e:
                             pass
                     
                     progress_bar.progress(1.0)
-                    status_text.text(f"✅ Scan complete! Found {engine.signals_queue.qsize()} signals")
-                    time.sleep(2)
+                    
+                    # Show detailed stats
+                    st.success(f"✅ Scan Complete!")
+                    
+                    col_s1, col_s2, col_s3 = st.columns(3)
+                    with col_s1:
+                        st.metric("Stocks Scanned", scan_stats['scanned'])
+                        st.metric("Models Trained", scan_stats['models_trained'])
+                    with col_s2:
+                        st.metric("Predictions Made", scan_stats['predictions_made'])
+                        st.metric("Low Confidence", scan_stats['low_confidence'])
+                    with col_s3:
+                        st.metric("🎯 Signals Generated", scan_stats['signals_generated'])
+                        st.metric("Insufficient Data", scan_stats['skipped_insufficient_data'])
+                    
+                    if scan_stats['signals_generated'] == 0:
+                        st.warning("""
+                        **No signals generated. Try:**
+                        - Lower confidence threshold (Settings → Min Confidence)
+                        - Wait for better market conditions
+                        - Check if bot is in Paper Trading mode (uses demo data)
+                        """)
+                    
+                    time.sleep(3)
                     st.rerun()
         
         with col2:
@@ -1796,7 +1896,7 @@ def main():
                 st.markdown("**AI Parameters**")
                 new_confidence = st.slider(
                     "Min Confidence (%)",
-                    50, 95, int(Config.MIN_CONFIDENCE * 100), 5
+                    50, 95, 60, 5  # Default 60%
                 )
                 
                 st.markdown("**Risk Management**")
