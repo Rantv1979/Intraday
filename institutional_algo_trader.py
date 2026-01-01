@@ -1,12 +1,12 @@
 """
 AI ALGORITHMIC TRADING BOT v8.2 - COMPLETE FIXED VERSION
-WITH KITE CONNECT, AUTO-REFRESH, MARKET MOOD GAUGE & LIVE PRICES
+WITH FULL KITE INTEGRATION, AUTO-REFRESH, AND SIGNAL GENERATION
 
 INSTALLATION:
 pip install streamlit pandas numpy scipy scikit-learn plotly kiteconnect pytz
 
 RUN:
-streamlit run institutional_algo_trader_final.py
+streamlit run institutional_algo_trader_fixed.py
 """
 
 import streamlit as st
@@ -15,13 +15,11 @@ import numpy as np
 import time
 import warnings
 from datetime import datetime, timedelta, time as dt_time
-from typing import Dict, List, Optional, Tuple
 import sqlite3
 import threading
 import queue
 import os
 import pytz
-from functools import wraps
 
 warnings.filterwarnings('ignore')
 
@@ -34,7 +32,7 @@ try:
     KITE_AVAILABLE = True
 except ImportError:
     KITE_AVAILABLE = False
-    st.warning("⚠️ KiteConnect not installed! Run: pip install kiteconnect")
+    st.error("❌ KiteConnect not installed! Run: pip install kiteconnect")
 
 try:
     from sklearn.ensemble import RandomForestClassifier
@@ -42,7 +40,7 @@ try:
     ML_AVAILABLE = True
 except ImportError:
     ML_AVAILABLE = False
-    st.warning("⚠️ scikit-learn not installed! Run: pip install scikit-learn")
+    st.error("❌ scikit-learn not installed! Run: pip install scikit-learn")
 
 try:
     import plotly.graph_objs as go
@@ -52,7 +50,7 @@ except ImportError:
     PLOTLY_AVAILABLE = False
 
 # ============================================================================
-# CONFIGURATION - FIXED FOR MORE SIGNALS
+# CONFIGURATION
 # ============================================================================
 
 class Config:
@@ -64,8 +62,8 @@ class Config:
     MAX_POSITIONS = 10
     MAX_DAILY_TRADES = 50
     
-    # AI Parameters - LOWERED FOR MORE SIGNALS
-    MIN_CONFIDENCE = 0.55  # 55% (was 60%)
+    # AI Parameters
+    MIN_CONFIDENCE = 0.55  # 55%
     
     # Risk Management
     ATR_MULTIPLIER = 2.0
@@ -130,7 +128,7 @@ class StockUniverse:
         ]
 
 # ============================================================================
-# MARKET INDICES DATA UPDATER - WITH AUTO REFRESH
+# MARKET INDICES DATA UPDATER
 # ============================================================================
 
 class MarketIndicesUpdater:
@@ -413,24 +411,24 @@ class KiteBroker:
             self.connect()
     
     def connect(self):
-        """Connect to Kite - checks session state first for persistence"""
+        """Connect to Kite"""
         try:
-            # Priority 1: Session state (persistent during session)
+            # Check for credentials in session state
             if 'kite_api_key' in st.session_state and 'kite_access_token' in st.session_state:
                 api_key = st.session_state.kite_api_key
                 access_token = st.session_state.kite_access_token
-            # Priority 2: Streamlit secrets (for deployment)
+            # Check streamlit secrets
             elif hasattr(st, 'secrets') and 'KITE_API_KEY' in st.secrets:
                 api_key = st.secrets.get("KITE_API_KEY", "")
                 access_token = st.secrets.get("KITE_ACCESS_TOKEN", "")
-            # Priority 3: Environment variables
+            # Check environment variables
             else:
                 api_key = os.getenv('KITE_API_KEY', '')
                 access_token = os.getenv('KITE_ACCESS_TOKEN', '')
             
             if not api_key or not access_token:
-                self.demo_mode = True
                 st.warning("⚠️ Kite credentials not found. Running in demo mode.")
+                self.demo_mode = True
                 return False
             
             # Initialize Kite Connect
@@ -454,7 +452,6 @@ class KiteBroker:
         except Exception as e:
             st.error(f"❌ Kite connection failed: {str(e)}")
             self.demo_mode = True
-            self.connected = False
             return False
     
     def load_instruments(self):
@@ -519,9 +516,11 @@ class KiteBroker:
                     ws.set_mode(ws.MODE_LTP, tokens)
                 
                 self.websocket_running = True
+                st.rerun()
             
             def on_close(ws, code, reason):
                 self.websocket_running = False
+                st.rerun()
             
             self.ticker.on_ticks = on_ticks
             self.ticker.on_connect = on_connect
@@ -598,9 +597,10 @@ class KiteBroker:
                 })
                 df = df.set_index('timestamp')
                 # Convert to IST
-                if df.index.tzinfo is None:
-                    df.index = df.index.tz_localize('UTC')
-                df.index = df.index.tz_convert(IST)
+                if df.index.tz is None:
+                    df.index = df.index.tz_localize('UTC').tz_convert(IST)
+                else:
+                    df.index = df.index.tz_convert(IST)
                 # Filter market hours
                 df = df.between_time('09:15', '15:30')
                 
@@ -664,6 +664,10 @@ class KiteBroker:
         except Exception as e:
             return {'status': 'error', 'message': str(e)}
 
+# ============================================================================
+# TECHNICAL ANALYSIS
+# ============================================================================
+
 class TechnicalAnalysis:
     """Technical indicators calculator"""
     
@@ -707,7 +711,7 @@ class TechnicalAnalysis:
         return df.fillna(method='bfill')
 
 # ============================================================================
-# AI ENGINE - FIXED FOR MORE SIGNALS
+# AI ENGINE
 # ============================================================================
 
 class AIEngine:
@@ -746,7 +750,7 @@ class AIEngine:
         return result
     
     def train_model(self, df, symbol):
-        """Train ML model - FIXED with lower thresholds"""
+        """Train ML model"""
         if not ML_AVAILABLE or df.empty or len(df) < 50:
             return None
         
@@ -762,7 +766,7 @@ class AIEngine:
             if features.empty:
                 return None
             
-            # Create labels - More sensitive thresholds
+            # Create labels
             future_returns = df['Close'].shift(-5) / df['Close'] - 1
             labels = pd.cut(
                 future_returns,
@@ -782,7 +786,7 @@ class AIEngine:
             scaler = RobustScaler()
             X_scaled = scaler.fit_transform(X)
             
-            # Train model with optimized parameters
+            # Train model
             model = RandomForestClassifier(
                 n_estimators=100,
                 max_depth=10,
@@ -832,7 +836,7 @@ class AIEngine:
                 1 for t in self.last_training_time.values()
                 if (datetime.now(IST) - t).total_seconds() < 3600
             ),
-            'models': list(self.models.keys())[:10]  # First 10
+            'models': list(self.models.keys())[:10]
         }
 
 # ============================================================================
@@ -906,7 +910,7 @@ class RiskManager:
         return True, "OK"
 
 # ============================================================================
-# TRADING ENGINE - WITH AUTO-EXECUTE
+# TRADING ENGINE
 # ============================================================================
 
 class TradingEngine:
@@ -938,9 +942,11 @@ class TradingEngine:
     
     def start(self):
         """Start the trading bot"""
-        self.running = True
-        threading.Thread(target=self.run_loop, daemon=True).start()
-        return True
+        if not self.running:
+            self.running = True
+            threading.Thread(target=self.run_loop, daemon=True).start()
+            return True
+        return False
     
     def stop(self):
         """Stop the trading bot"""
@@ -949,8 +955,6 @@ class TradingEngine:
     
     def run_loop(self):
         """Main trading loop"""
-        scan_counter = 0
-        
         while self.running:
             try:
                 # Check market hours
@@ -972,8 +976,7 @@ class TradingEngine:
                 # Manage open positions
                 self.manage_positions()
                 
-                scan_counter += 1
-                time.sleep(5)  # Reduced sleep for faster response
+                time.sleep(5)
                 
             except Exception as e:
                 time.sleep(10)
@@ -989,7 +992,7 @@ class TradingEngine:
                     break
                 
                 # Get historical data
-                df = self.broker.get_historical(symbol, days=20)  # Reduced for speed
+                df = self.broker.get_historical(symbol, days=20)
                 if len(df) < 50:
                     continue
                 
@@ -1038,19 +1041,19 @@ class TradingEngine:
                 self.stats['signals_generated'] += 1
                 
             except Exception as e:
-                continue  # Silent fail for individual stocks
+                continue
     
     def execute_signals(self):
         """Execute pending signals"""
         executed_count = 0
         
-        while not self.signals_queue.empty() and executed_count < 3:  # Max 3 at once
+        while not self.signals_queue.empty() and executed_count < 3:
             signal = self.signals_queue.get()
             
             try:
                 can_trade, reason = self.risk.can_trade()
                 if not can_trade:
-                    self.signals_queue.put(signal)  # Put back in queue
+                    self.signals_queue.put(signal)
                     break
                 
                 # Check if already in position
@@ -1094,7 +1097,7 @@ class TradingEngine:
                 continue
     
     def manage_positions(self):
-        """Manage open positions - check stops and targets"""
+        """Manage open positions"""
         for symbol, pos in list(self.risk.positions.items()):
             try:
                 current_price = self.broker.get_ltp(symbol)
@@ -1175,229 +1178,50 @@ class TradingEngine:
         self.stats['signals_generated'] = 0
 
 # ============================================================================
-# AUTO-REFRESH SYSTEM - COMPLETELY FIXED
+# AUTO-REFRESH COMPONENT
 # ============================================================================
 
-class AutoRefreshSystem:
-    """Handles auto-refresh of market data"""
+def auto_refresh_component(refresh_interval=5):
+    """Auto-refresh component for market data"""
     
-    def __init__(self, refresh_interval=5):
-        self.refresh_interval = refresh_interval
-        self.last_refresh = datetime.now(IST)
-        self.refresh_counter = 0
+    # Initialize refresh tracking
+    if 'last_auto_refresh' not in st.session_state:
+        st.session_state.last_auto_refresh = datetime.now(IST)
+        st.session_state.auto_refresh_counter = 0
+    
+    # Calculate time since last refresh
+    current_time = datetime.now(IST)
+    time_since_refresh = (current_time - st.session_state.last_auto_refresh).total_seconds()
+    
+    # Check if refresh is needed
+    if time_since_refresh >= refresh_interval:
+        # Update timestamp
+        st.session_state.last_auto_refresh = current_time
+        st.session_state.auto_refresh_counter += 1
         
-    def should_refresh(self):
-        """Check if it's time to refresh"""
-        current_time = datetime.now(IST)
-        time_since_refresh = (current_time - self.last_refresh).total_seconds()
-        
-        if time_since_refresh >= self.refresh_interval:
-            self.last_refresh = current_time
-            self.refresh_counter += 1
-            return True
-        return False
+        # Force rerun
+        st.rerun()
     
-    def get_refresh_progress(self):
-        """Get progress towards next refresh (0-1)"""
-        current_time = datetime.now(IST)
-        time_since_refresh = (current_time - self.last_refresh).total_seconds()
-        progress = min(1.0, time_since_refresh / self.refresh_interval)
-        remaining = max(0, self.refresh_interval - time_since_refresh)
-        return progress, remaining
+    # Show countdown in sidebar
+    with st.sidebar:
+        remaining = max(0, refresh_interval - time_since_refresh)
+        progress = time_since_refresh / refresh_interval
+        st.progress(min(progress, 1.0), text=f"🔄 Next refresh in {int(remaining)}s")
     
-    def force_refresh(self):
-        """Force an immediate refresh"""
-        self.last_refresh = datetime.now(IST) - timedelta(seconds=self.refresh_interval + 1)
-        return True
+    return False
 
 # ============================================================================
-# COLORFUL BUTTON TABS
-# ============================================================================
-
-def render_colorful_tabs():
-    """Render colorful button-style tabs"""
-    
-    tab_config = [
-        {"name": "🎯 Algo Trading", "color": "#1E88E5", "key": "tab_algo"},
-        {"name": "📈 Positions", "color": "#4CAF50", "key": "tab_positions"},
-        {"name": "📋 Trade History", "color": "#FF9800", "key": "tab_history"},
-        {"name": "📊 Live Charts", "color": "#9C27B0", "key": "tab_charts"},
-        {"name": "📉 Analytics", "color": "#F44336", "key": "tab_analytics"},
-        {"name": "⚙️ Settings", "color": "#607D8B", "key": "tab_settings"}
-    ]
-    
-    if 'active_tab' not in st.session_state:
-        st.session_state.active_tab = 0
-    
-    cols = st.columns(len(tab_config))
-    
-    for idx, (col, tab) in enumerate(zip(cols, tab_config)):
-        with col:
-            is_active = st.session_state.active_tab == idx
-            
-            if st.button(
-                tab['name'],
-                key=tab['key'],
-                use_container_width=True,
-                type="primary" if is_active else "secondary"
-            ):
-                st.session_state.active_tab = idx
-                st.rerun()
-    
-    return st.session_state.active_tab
-
-# ============================================================================
-# KITE CONNECT UI - ADDED BACK
-# ============================================================================
-
-def render_kite_connect_ui():
-    """Render Kite Connect connection UI"""
-    with st.expander("🔑 Connect to Kite Connect", expanded=False):
-        st.info("""
-        **Steps to connect:**
-        1. Get API Key from https://developers.kite.trade/
-        2. Generate access token using login URL
-        3. Paste credentials below
-        """)
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            api_key = st.text_input(
-                "API Key",
-                value=st.session_state.get('kite_api_key', ''),
-                type="password",
-                help="Your Kite Connect API Key"
-            )
-        
-        with col2:
-            access_token = st.text_input(
-                "Access Token",
-                value=st.session_state.get('kite_access_token', ''),
-                type="password",
-                help="Generated access token"
-            )
-        
-        col_btn1, col_btn2, col_btn3 = st.columns(3)
-        
-        with col_btn1:
-            if st.button("💾 Save Credentials", type="primary", use_container_width=True):
-                if api_key and access_token:
-                    st.session_state.kite_api_key = api_key
-                    st.session_state.kite_access_token = access_token
-                    st.success("✅ Credentials saved!")
-                    
-                    # Try to connect immediately
-                    if st.session_state.get('engine'):
-                        engine = st.session_state.engine
-                        if engine.broker.connect():
-                            st.success("✅ Connected to Kite!")
-                            st.rerun()
-                        else:
-                            st.error("❌ Connection failed")
-                else:
-                    st.error("❌ Please enter both API Key and Access Token")
-        
-        with col_btn2:
-            if st.button("🔄 Test Connection", use_container_width=True):
-                if api_key and access_token:
-                    try:
-                        kite = KiteConnect(api_key=api_key)
-                        kite.set_access_token(access_token)
-                        profile = kite.profile()
-                        st.success(f"✅ Connection successful! User: {profile['user_name']}")
-                    except Exception as e:
-                        st.error(f"❌ Connection failed: {e}")
-                else:
-                    st.error("❌ Please enter credentials first")
-        
-        with col_btn3:
-            if st.button("🗑️ Clear Credentials", use_container_width=True):
-                for key in ['kite_api_key', 'kite_access_token']:
-                    if key in st.session_state:
-                        del st.session_state[key]
-                
-                if st.session_state.get('engine'):
-                    st.session_state.engine.broker.connected = False
-                    st.session_state.engine.broker.kite = None
-                    st.session_state.engine.broker.demo_mode = True
-                
-                st.success("✅ Credentials cleared!")
-                st.rerun()
-        
-        # Token Generator
-        st.markdown("---")
-        st.markdown("#### 🔗 Generate Access Token")
-        
-        with st.form("token_generator"):
-            temp_api_key = st.text_input("Temporary API Key", type="password")
-            temp_api_secret = st.text_input("API Secret", type="password")
-            
-            if st.form_submit_button("Generate Login URL", type="secondary"):
-                if temp_api_key and temp_api_secret:
-                    try:
-                        temp_kite = KiteConnect(api_key=temp_api_key)
-                        login_url = temp_kite.login_url()
-                        
-                        st.session_state.temp_api_key = temp_api_key
-                        st.session_state.temp_api_secret = temp_api_secret
-                        st.session_state.login_url = login_url
-                        
-                        st.success("✅ Login URL generated!")
-                        st.markdown(f"[🔗 Click here to login]({login_url})")
-                    except Exception as e:
-                        st.error(f"❌ Error: {e}")
-                else:
-                    st.error("❌ Please enter both API Key and Secret")
-        
-        # Complete token generation
-        if 'login_url' in st.session_state:
-            st.markdown("---")
-            st.markdown("**Step 2: Complete Authentication**")
-            
-            with st.form("complete_auth"):
-                request_token = st.text_input("Request Token", help="From redirect URL after login")
-                
-                if st.form_submit_button("Generate Access Token", type="primary"):
-                    try:
-                        temp_kite = KiteConnect(api_key=st.session_state.temp_api_key)
-                        data = temp_kite.generate_session(
-                            request_token,
-                            api_secret=st.session_state.temp_api_secret
-                        )
-                        
-                        access_token = data["access_token"]
-                        
-                        st.success("✅ Access Token Generated!")
-                        st.code(access_token, language="text")
-                        
-                        # Auto-save
-                        st.session_state.kite_api_key = st.session_state.temp_api_key
-                        st.session_state.kite_access_token = access_token
-                        
-                        # Clean up
-                        for key in ['temp_api_key', 'temp_api_secret', 'login_url']:
-                            if key in st.session_state:
-                                del st.session_state[key]
-                        
-                        st.rerun()
-                        
-                    except Exception as e:
-                        st.error(f"❌ Failed: {e}")
-
-# ============================================================================
-# MAIN STREAMLIT APP - COMPLETE FIXED VERSION
+# MAIN STREAMLIT APP
 # ============================================================================
 
 def main():
     st.set_page_config(
         page_title="AI Algo Trading Bot v8.2",
         page_icon="🤖",
-        layout="wide",
-        initial_sidebar_state="expanded"
+        layout="wide"
     )
     
-    # Custom CSS for enhanced UI
+    # Custom CSS
     st.markdown("""
     <style>
     .main-header {
@@ -1460,15 +1284,6 @@ def main():
         transform: translateY(-2px);
         box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     }
-    .market-mood-card {
-        background: linear-gradient(135deg, #1a1a2e, #16213e);
-        padding: 1.5rem;
-        border-radius: 15px;
-        border-left: 5px solid;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        text-align: center;
-        height: 100%;
-    }
     .signal-badge {
         display: inline-block;
         padding: 4px 12px;
@@ -1522,39 +1337,20 @@ def main():
     if 'engine' not in st.session_state:
         st.session_state.engine = TradingEngine(Config(), demo_mode=True)
         st.session_state.market_indices = MarketIndicesUpdater(st.session_state.engine.broker)
-        st.session_state.auto_refresh_system = AutoRefreshSystem(refresh_interval=5)
+        st.session_state.last_refresh = datetime.now(IST)
         st.session_state.auto_execute = False
         st.session_state.auto_refresh = True
+        st.session_state.refresh_rate = 5
         st.session_state.active_tab = 0
-        
-        # Auto-connect if credentials exist
-        if 'kite_api_key' in st.session_state and 'kite_access_token' in st.session_state:
-            with st.spinner("🔌 Auto-connecting to Kite..."):
-                st.session_state.engine.broker.connect()
+        st.session_state.auto_refresh_counter = 0
+        st.session_state.last_auto_refresh = datetime.now(IST)
     
     engine = st.session_state.engine
     market_indices = st.session_state.market_indices
-    refresh_system = st.session_state.auto_refresh_system
     
-    # ============================================================================
-    # AUTO REFRESH SYSTEM - FIXED AND WORKING
-    # ============================================================================
-    
-    # Check if we need to refresh market data
+    # AUTO REFRESH LOGIC
     if st.session_state.get('auto_refresh', True):
-        if refresh_system.should_refresh():
-            # Update market indices
-            market_indices.update_from_kite()
-            
-            # Update LTP cache for all positions
-            for symbol in list(engine.risk.positions.keys()):
-                try:
-                    engine.broker.get_ltp(symbol)  # Updates cache
-                except:
-                    pass
-            
-            # Force rerun for UI update
-            st.rerun()
+        auto_refresh_component(st.session_state.refresh_rate)
     
     # Header
     st.markdown("<h1 class='main-header'>🤖 AI ALGORITHMIC TRADING BOT v8.2</h1>", 
@@ -1591,22 +1387,22 @@ def main():
         """, unsafe_allow_html=True)
     
     with col_clock3:
-        progress, remaining = refresh_system.get_refresh_progress()
+        time_since_refresh = (datetime.now(IST) - st.session_state.last_auto_refresh).total_seconds()
+        next_refresh = max(0, st.session_state.refresh_rate - time_since_refresh)
         st.markdown(f"""
         <div class="clock-widget">
-            <div class="clock-time">{int(remaining)}s</div>
+            <div class="clock-time">{int(next_refresh)}s</div>
             <div class="clock-date">Next Refresh</div>
             <div style="font-size: 0.8rem; color: #1E88E5;">🔄 Auto: {'ON' if st.session_state.auto_refresh else 'OFF'}</div>
         </div>
         """, unsafe_allow_html=True)
     
-    # ============================================================================
-    # MARKET MOOD GAUGE
-    # ============================================================================
+    # Market Dashboard
     st.markdown("---")
     st.markdown("### 📊 Live Market Dashboard")
     
     # Get current market data
+    market_indices.update_from_kite()
     nifty_data = market_indices.indices_data['NIFTY 50']
     banknifty_data = market_indices.indices_data['NIFTY BANK']
     sensex_data = market_indices.indices_data['SENSEX']
@@ -1627,7 +1423,6 @@ def main():
         st.markdown(f'<h3>📈 NIFTY 50 {live_status}</h3>', unsafe_allow_html=True)
         st.markdown(f'<h2>{nifty_data["ltp"]:,.2f}</h2>', unsafe_allow_html=True)
         st.markdown(f'<p class="{change_color}">{"+" if nifty_data["change"] >= 0 else ""}{nifty_data["change"]:+.2f} ({nifty_data["change_pct"]:+.2f}%)</p>', unsafe_allow_html=True)
-        st.markdown(f'<p style="font-size: 0.8rem; color: #888;">{nifty_data["timestamp"].strftime("%H:%M:%S")} IST</p>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
     
     with col_idx2:
@@ -1636,7 +1431,6 @@ def main():
         st.markdown(f'<h3>🏦 NIFTY BANK {live_status}</h3>', unsafe_allow_html=True)
         st.markdown(f'<h2>{banknifty_data["ltp"]:,.2f}</h2>', unsafe_allow_html=True)
         st.markdown(f'<p class="{change_color}">{"+" if banknifty_data["change"] >= 0 else ""}{banknifty_data["change"]:+.2f} ({banknifty_data["change_pct"]:+.2f}%)</p>', unsafe_allow_html=True)
-        st.markdown(f'<p style="font-size: 0.8rem; color: #888;">{banknifty_data["timestamp"].strftime("%H:%M:%S")} IST</p>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
     
     with col_idx3:
@@ -1645,7 +1439,6 @@ def main():
         st.markdown(f'<h3>📊 SENSEX {live_status}</h3>', unsafe_allow_html=True)
         st.markdown(f'<h2>{sensex_data["ltp"]:,.2f}</h2>', unsafe_allow_html=True)
         st.markdown(f'<p class="{change_color}">{"+" if sensex_data["change"] >= 0 else ""}{sensex_data["change"]:+.2f} ({sensex_data["change_pct"]:+.2f}%)</p>', unsafe_allow_html=True)
-        st.markdown(f'<p style="font-size: 0.8rem; color: #888;">{sensex_data["timestamp"].strftime("%H:%M:%S")} IST</p>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
     
     with col_idx4:
@@ -1653,7 +1446,6 @@ def main():
         st.markdown(f'<h3>🎯 MARKET MOOD</h3>', unsafe_allow_html=True)
         st.markdown(f'<h2 style="color: {mood_color}">{mood}</h2>', unsafe_allow_html=True)
         st.markdown(f'<p>Avg Change: {avg_change:+.2f}%</p>', unsafe_allow_html=True)
-        st.markdown(f'<p style="font-size: 0.8rem; color: #888;">Refresh: {refresh_system.refresh_interval}s</p>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
     
     st.markdown("---")
@@ -1665,15 +1457,17 @@ def main():
         col1, col2 = st.columns(2)
         with col1:
             if st.button("🚀 START", type="primary", use_container_width=True):
-                engine.start()
-                st.success("✅ Bot Started!")
-                st.rerun()
+                if engine.start():
+                    st.success("✅ Bot Started!")
+                    time.sleep(1)
+                    st.rerun()
         
         with col2:
             if st.button("🛑 STOP", type="secondary", use_container_width=True):
-                engine.stop()
-                st.warning("⚠️ Bot Stopped!")
-                st.rerun()
+                if engine.stop():
+                    st.warning("⚠️ Bot Stopped!")
+                    time.sleep(1)
+                    st.rerun()
         
         st.markdown("---")
         
@@ -1689,35 +1483,48 @@ def main():
         
         st.markdown("---")
         
-        # Trading Mode
-        mode = st.radio("Trading Mode", 
-                       ["📈 Paper Trading", "💰 Live Trading"], 
-                       index=0,
-                       help="Paper trading uses demo data, Live connects to Kite")
+        # Kite Connect Setup
+        st.markdown("### 🔑 Kite Connect Setup")
         
-        if mode == "📈 Paper Trading":
-            engine.broker.demo_mode = True
+        if not engine.broker.connected:
+            with st.expander("Connect to Kite", expanded=True):
+                api_key = st.text_input("API Key", type="password")
+                access_token = st.text_input("Access Token", type="password")
+                
+                if st.button("Connect to Kite", type="primary"):
+                    if api_key and access_token:
+                        st.session_state.kite_api_key = api_key
+                        st.session_state.kite_access_token = access_token
+                        if engine.broker.connect():
+                            st.success("✅ Connected to Kite!")
+                            st.rerun()
+                    else:
+                        st.error("❌ Please enter both API Key and Access Token")
         else:
-            engine.broker.demo_mode = False
-            # Show Kite Connect UI
-            render_kite_connect_ui()
+            st.success("✅ Connected to Kite")
+            if st.button("Disconnect", type="secondary"):
+                engine.broker.connected = False
+                engine.broker.demo_mode = True
+                st.session_state.kite_api_key = ""
+                st.session_state.kite_access_token = ""
+                st.warning("Disconnected. Running in demo mode.")
+                st.rerun()
         
         st.markdown("---")
         
-        # Capital
+        # Trading Configuration
+        st.markdown("### ⚡ Trading Configuration")
+        
         capital = st.number_input("Capital (₹)", 
                                  min_value=100000, 
                                  value=Config.TOTAL_CAPITAL, 
-                                 step=100000,
-                                 help="Total trading capital")
+                                 step=100000)
         Config.TOTAL_CAPITAL = capital
         
-        # Risk
         risk = st.slider("Risk per Trade (%)", 0.5, 5.0, 
                         float(Config.RISK_PER_TRADE * 100), 0.1) / 100
         Config.RISK_PER_TRADE = risk
         
-        # Confidence
         confidence = st.slider("Min Confidence (%)", 50, 90, 
                               int(Config.MIN_CONFIDENCE * 100), 5) / 100
         Config.MIN_CONFIDENCE = confidence
@@ -1728,75 +1535,80 @@ def main():
         st.markdown("### 🔧 Trading Features")
         
         auto_exec = st.checkbox("🤖 Auto-Execute Signals", 
-                               value=st.session_state.auto_execute,
-                               help="Automatically execute AI signals")
+                               value=st.session_state.auto_execute)
         st.session_state.auto_execute = auto_exec
         
-        st.markdown("---")
-        
-        # Auto Refresh Settings
-        st.markdown("### 🔄 Auto Refresh")
-        
-        auto_refresh = st.checkbox("Enable Auto Refresh", 
-                                  value=st.session_state.auto_refresh,
-                                  help="Auto-refresh market data")
+        auto_refresh = st.checkbox("🔄 Enable Auto Refresh", 
+                                  value=st.session_state.auto_refresh)
         st.session_state.auto_refresh = auto_refresh
         
         if auto_refresh:
-            refresh_interval = st.slider("Refresh Rate (seconds)", 1, 30, 
-                                        refresh_system.refresh_interval)
-            refresh_system.refresh_interval = refresh_interval
-            
-            # Show refresh progress
-            progress, remaining = refresh_system.get_refresh_progress()
-            st.progress(progress, text=f"Next refresh in {int(remaining)}s")
+            refresh_rate = st.slider("Refresh Rate (seconds)", 1, 30, 
+                                    int(st.session_state.refresh_rate))
+            st.session_state.refresh_rate = refresh_rate
         
         # Manual Refresh Button
         if st.button("🔄 Refresh Now", use_container_width=True, type="secondary"):
             market_indices.update_from_kite()
-            refresh_system.force_refresh()
             st.success("✅ Market data refreshed!")
             st.rerun()
         
         st.markdown("---")
         
-        # Market Data Status
-        st.markdown("### 📈 Market Data")
-        if engine.broker.connected:
-            if engine.broker.websocket_running:
-                st.success("✅ Live WebSocket")
-            else:
-                st.success("✅ API Connected")
-        else:
-            st.warning("⚠️ Demo Mode")
-        
-        # Stock Universe Info
-        st.markdown("### 📊 Stock Universe")
-        total_stocks = len(StockUniverse.get_all_fno_stocks())
-        scanned = min(20, total_stocks)  # Currently scanning top 20
-        st.info(f"**Scanning:** {scanned}/{total_stocks} stocks")
-        
         # Signal Controls
-        st.markdown("---")
         st.markdown("### 📡 Signal Controls")
-        if st.button("🧹 Clear Signals", use_container_width=True):
-            engine.clear_signals()
-            st.success("✅ Signals cleared!")
-            st.rerun()
         
-        if st.button("⚡ Force Scan", use_container_width=True):
-            engine.scan_signals()
-            st.success("✅ Scan completed!")
-            st.rerun()
+        col_scan, col_clear = st.columns(2)
+        with col_scan:
+            if st.button("🔍 Scan", use_container_width=True):
+                with st.spinner("Scanning for signals..."):
+                    engine.scan_signals()
+                    st.success(f"✅ Scan complete! Found {engine.get_pending_signals_count()} signals")
+                    st.rerun()
         
-        # Debug Info
-        st.markdown("---")
-        st.markdown("### 🐛 Debug Info")
-        st.info(f"Auto-refresh count: {refresh_system.refresh_counter}")
-        if st.button("🔄 Force Rerun"):
+        with col_clear:
+            if st.button("🧹 Clear", use_container_width=True):
+                engine.clear_signals()
+                st.success("✅ Signals cleared!")
+                st.rerun()
+        
+        if st.button("⚡ Execute All", use_container_width=True, type="primary"):
+            executed = 0
+            while not engine.signals_queue.empty():
+                signal = engine.signals_queue.get()
+                try:
+                    result = engine.broker.place_order(
+                        signal['symbol'],
+                        signal['direction'],
+                        signal['quantity'],
+                        signal['price']
+                    )
+                    if result['status'] == 'success':
+                        position = {
+                            'symbol': signal['symbol'],
+                            'direction': signal['direction'],
+                            'entry_time': datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S'),
+                            'entry_price': result['price'],
+                            'quantity': signal['quantity'],
+                            'stop_loss': signal['stop_loss'],
+                            'take_profit': signal['take_profit'],
+                            'status': 'OPEN',
+                            'confidence': signal['confidence']
+                        }
+                        engine.risk.positions[signal['symbol']] = position
+                        engine.db.save_position(position)
+                        engine.risk.daily_trades += 1
+                        
+                        if 'id' in signal:
+                            engine.db.mark_signal_executed(signal['id'])
+                        
+                        executed += 1
+                except:
+                    pass
+            st.success(f"✅ Executed {executed} signals!")
             st.rerun()
     
-    # Top Metrics
+    # Performance Dashboard
     st.markdown("### 📊 Bot Performance Dashboard")
     col1, col2, col3, col4, col5 = st.columns(5)
     
@@ -1837,72 +1649,13 @@ def main():
         st.markdown("**Pending Signals**")
         st.markdown('</div>', unsafe_allow_html=True)
     
-    # ============================================================================
-    # COLORFUL BUTTON TABS
-    # ============================================================================
+    # Tabs
     st.markdown("---")
-    active_tab = render_colorful_tabs()
-    st.markdown("---")
+    tabs = st.tabs(["🎯 Algo Trading", "📈 Positions", "📋 History", "📊 Charts", "📉 Analytics", "⚙️ Settings"])
     
-    # Tab Content
-    if active_tab == 0:  # Algo Trading
+    # Tab 1: Algo Trading
+    with tabs[0]:
         st.markdown("### 🎯 AI Algorithm Trading Signals")
-        
-        # Signal Generation Controls
-        col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
-        with col1:
-            if st.button("🔍 Scan Top 20 Stocks", type="primary", use_container_width=True):
-                with st.spinner("🔍 Scanning for signals..."):
-                    engine.scan_signals()
-                    st.success(f"✅ Scan complete! Found {engine.get_pending_signals_count()} signals")
-                    st.rerun()
-        
-        with col2:
-            if st.button("⚡ Quick Execute", type="secondary", use_container_width=True):
-                executed = 0
-                while not engine.signals_queue.empty():
-                    signal = engine.signals_queue.get()
-                    try:
-                        result = engine.broker.place_order(
-                            signal['symbol'],
-                            signal['direction'],
-                            signal['quantity'],
-                            signal['price']
-                        )
-                        if result['status'] == 'success':
-                            position = {
-                                'symbol': signal['symbol'],
-                                'direction': signal['direction'],
-                                'entry_time': datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S'),
-                                'entry_price': result['price'],
-                                'quantity': signal['quantity'],
-                                'stop_loss': signal['stop_loss'],
-                                'take_profit': signal['take_profit'],
-                                'status': 'OPEN',
-                                'confidence': signal['confidence']
-                            }
-                            engine.risk.positions[signal['symbol']] = position
-                            engine.db.save_position(position)
-                            engine.risk.daily_trades += 1
-                            
-                            if 'id' in signal:
-                                engine.db.mark_signal_executed(signal['id'])
-                            
-                            executed += 1
-                    except:
-                        pass
-                st.success(f"✅ Executed {executed} signals!")
-                st.rerun()
-        
-        with col3:
-            if st.button("🧹 Clear", use_container_width=True):
-                engine.clear_signals()
-                st.success("✅ Signals cleared!")
-                st.rerun()
-        
-        with col4:
-            if st.button("🔄 Refresh", use_container_width=True):
-                st.rerun()
         
         # Show pending signals
         st.markdown("#### 📋 Pending Signals")
@@ -1919,57 +1672,64 @@ def main():
                 engine.signals_queue.put(temp_queue.get())
             
             if signals:
-                df_signals = pd.DataFrame(signals)
-                df_signals['confidence_pct'] = df_signals['confidence'].apply(lambda x: f"{x:.1%}")
-                df_signals['direction_badge'] = df_signals['direction'].apply(
-                    lambda x: f'<span class="signal-badge signal-{x.lower()}">{x}</span>'
-                )
-                
-                # Display with columns
                 st.markdown(f"**Found {len(signals)} signals**")
                 
-                for _, signal in df_signals.iterrows():
+                for signal in signals:
                     col_s1, col_s2, col_s3, col_s4, col_s5 = st.columns([2, 1, 2, 2, 1])
                     with col_s1:
                         st.markdown(f"**{signal['symbol']}**")
                     with col_s2:
-                        st.markdown(f'<div class="signal-badge signal-{signal["direction"].lower()}">{signal["direction"]}</div>', 
+                        badge_class = "signal-long" if signal['direction'] == 'LONG' else "signal-short"
+                        st.markdown(f'<div class="signal-badge {badge_class}">{signal["direction"]}</div>', 
                                   unsafe_allow_html=True)
                     with col_s3:
                         st.markdown(f"₹{signal['price']:.2f}")
                     with col_s4:
-                        st.markdown(f"Confidence: **{signal['confidence_pct']}**")
+                        st.markdown(f"Confidence: **{signal['confidence']:.1%}**")
                     with col_s5:
-                        if st.button("📈 View", key=f"view_{signal['symbol']}"):
-                            st.session_state.chart_symbol = signal['symbol']
-                            st.session_state.active_tab = 3
-                            st.rerun()
+                        if st.button("Execute", key=f"exec_{signal['symbol']}"):
+                            result = engine.broker.place_order(
+                                signal['symbol'],
+                                signal['direction'],
+                                signal['quantity'],
+                                signal['price']
+                            )
+                            if result['status'] == 'success':
+                                position = {
+                                    'symbol': signal['symbol'],
+                                    'direction': signal['direction'],
+                                    'entry_time': datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S'),
+                                    'entry_price': result['price'],
+                                    'quantity': signal['quantity'],
+                                    'stop_loss': signal['stop_loss'],
+                                    'take_profit': signal['take_profit'],
+                                    'status': 'OPEN',
+                                    'confidence': signal['confidence']
+                                }
+                                engine.risk.positions[signal['symbol']] = position
+                                engine.db.save_position(position)
+                                engine.risk.daily_trades += 1
+                                
+                                if 'id' in signal:
+                                    engine.db.mark_signal_executed(signal['id'])
+                                
+                                st.success(f"✅ Executed {signal['symbol']}!")
+                                st.rerun()
                 st.markdown("---")
         else:
-            st.info("🔭 No pending signals. Click 'Scan Top 20 Stocks' to generate signals.")
-        
-        # AI Model Status
-        st.markdown("#### 🧠 AI Model Status")
-        model_stats = engine.ai.get_model_stats()
-        
-        col_m1, col_m2, col_m3 = st.columns(3)
-        with col_m1:
-            st.metric("Models Trained", model_stats['total_models'])
-        with col_m2:
-            st.metric("Recently Trained", model_stats['recently_trained'])
-        with col_m3:
-            st.metric("Confidence Threshold", f"{Config.MIN_CONFIDENCE:.0%}")
+            st.info("🔭 No pending signals. Click 'Scan' in sidebar to generate signals.")
         
         # Recent Signals from Database
         st.markdown("#### 📝 Recent Signal History")
         recent_signals = engine.db.get_recent_signals(10)
-        if not recent_signals.empty:
+        if not recent_signals.empty():
             st.dataframe(recent_signals[['symbol', 'direction', 'confidence', 'generated_time', 'executed']], 
                         use_container_width=True)
         else:
             st.info("No recent signals in history")
     
-    elif active_tab == 1:  # Positions
+    # Tab 2: Positions
+    with tabs[1]:
         st.markdown("### 📈 Active Positions")
         
         positions_df = engine.db.get_open_positions()
@@ -2002,7 +1762,7 @@ def main():
             st.markdown("#### 🛑 Manual Exit")
             cols = st.columns(min(4, len(positions_df)))
             for idx, (_, row) in enumerate(positions_df.iterrows()):
-                if idx < 4:  # Show max 4 buttons
+                if idx < 4:
                     with cols[idx]:
                         if st.button(f"Exit {row['symbol']}", key=f"exit_{row['symbol']}"):
                             price = engine.broker.get_ltp(row['symbol'])
@@ -2012,77 +1772,38 @@ def main():
         else:
             st.info("🔭 No active positions")
     
-    elif active_tab == 2:  # History
+    # Tab 3: History
+    with tabs[2]:
         st.markdown("### 📋 Trade History")
         
-        # Date filter
-        col1, col2 = st.columns(2)
-        with col1:
-            days_back = st.slider("Show trades from last N days", 1, 30, 7)
-        
-        # Get trades
-        all_trades = engine.db.get_trades(1000)  # Get more than needed
-        if not all_trades.empty:
-            all_trades['entry_time'] = pd.to_datetime(all_trades['entry_time'])
-            cutoff_date = datetime.now(IST) - timedelta(days=days_back)
-            recent_trades = all_trades[all_trades['entry_time'] >= cutoff_date]
+        all_trades = engine.db.get_trades(1000)
+        if not all_trades.empty():
+            # Format for display
+            display_trades = all_trades.copy()
+            display_trades['pnl_display'] = display_trades['pnl'].apply(lambda x: f"₹{x:+,.0f}")
+            display_trades['pnl_pct_display'] = display_trades['pnl_pct'].apply(lambda x: f"{x:+.2f}%")
+            display_trades['entry_price'] = display_trades['entry_price'].apply(lambda x: f"₹{x:.2f}")
+            display_trades['exit_price'] = display_trades['exit_price'].apply(lambda x: f"₹{x:.2f}" if pd.notna(x) else "")
             
-            if not recent_trades.empty:
-                # Format for display
-                display_trades = recent_trades.copy()
-                display_trades['pnl_display'] = display_trades['pnl'].apply(lambda x: f"₹{x:+,.0f}")
-                display_trades['pnl_pct_display'] = display_trades['pnl_pct'].apply(lambda x: f"{x:+.2f}%")
-                display_trades['entry_price'] = display_trades['entry_price'].apply(lambda x: f"₹{x:.2f}")
-                display_trades['exit_price'] = display_trades['exit_price'].apply(lambda x: f"₹{x:.2f}" if pd.notna(x) else "")
-                
-                st.dataframe(display_trades[['symbol', 'direction', 'entry_time', 'entry_price', 
-                                           'exit_price', 'quantity', 'pnl_display', 'pnl_pct_display', 
-                                           'confidence']], 
-                           use_container_width=True,
-                           height=400)
-                
-                # Summary stats
-                st.markdown("#### 📊 Trade Summary")
-                col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-                with col_s1:
-                    st.metric("Total Trades", len(recent_trades))
-                with col_s2:
-                    winning = len(recent_trades[recent_trades['pnl'] > 0])
-                    st.metric("Winning Trades", winning)
-                with col_s3:
-                    total_pnl = recent_trades['pnl'].sum()
-                    st.metric("Total P&L", f"₹{total_pnl:+,.0f}")
-                with col_s4:
-                    if len(recent_trades) > 0:
-                        win_rate = (winning / len(recent_trades)) * 100
-                        st.metric("Win Rate", f"{win_rate:.1f}%")
-                
-                # Export
-                csv = recent_trades.to_csv(index=False)
-                st.download_button(
-                    "📥 Export CSV",
-                    csv,
-                    f"trades_{datetime.now(IST).strftime('%Y%m%d_%H%M')}.csv",
-                    "text/csv",
-                    key="export_csv"
-                )
-            else:
-                st.info("🔭 No trades in selected period")
+            st.dataframe(display_trades[['symbol', 'direction', 'entry_time', 'entry_price', 
+                                       'exit_price', 'quantity', 'pnl_display', 'pnl_pct_display', 
+                                       'confidence']], 
+                       use_container_width=True,
+                       height=400)
         else:
             st.info("🔭 No trade history")
     
-    elif active_tab == 3:  # Charts
+    # Tab 4: Charts
+    with tabs[3]:
         st.markdown("### 📊 Live Charts & Analysis")
         
         # Chart selection
-        col1, col2, col3 = st.columns([3, 1, 1])
+        col1, col2 = st.columns([3, 1])
         with col1:
-            # Get symbol from session state or default
-            default_symbol = st.session_state.get('chart_symbol', 'RELIANCE')
             symbol = st.selectbox(
                 "Select Stock",
                 StockUniverse.get_all_fno_stocks()[:50],
-                index=StockUniverse.get_all_fno_stocks()[:50].index(default_symbol) if default_symbol in StockUniverse.get_all_fno_stocks()[:50] else 0
+                index=0
             )
         
         with col2:
@@ -2092,10 +1813,6 @@ def main():
                 index=1
             )
         
-        with col3:
-            if st.button("🔄 Refresh", use_container_width=True):
-                st.rerun()
-        
         # Get data based on timeframe
         days_map = {"1D": 1, "5D": 5, "1M": 30, "3M": 90}
         df = engine.broker.get_historical(symbol, days=days_map[timeframe])
@@ -2103,11 +1820,11 @@ def main():
         if PLOTLY_AVAILABLE and not df.empty:
             # Create chart
             fig = make_subplots(
-                rows=3, cols=1,
+                rows=2, cols=1,
                 shared_xaxes=True,
                 vertical_spacing=0.05,
-                row_heights=[0.6, 0.2, 0.2],
-                subplot_titles=(f"{symbol} - Price Chart", "Volume", "RSI")
+                row_heights=[0.7, 0.3],
+                subplot_titles=(f"{symbol} - Price Chart", "Volume")
             )
             
             # Candlestick
@@ -2125,24 +1842,6 @@ def main():
                 row=1, col=1
             )
             
-            # Calculate indicators
-            df = TechnicalAnalysis.calculate_indicators(df)
-            
-            # Moving averages
-            if 'SMA20' in df.columns:
-                fig.add_trace(
-                    go.Scatter(x=df.index, y=df['SMA20'], 
-                             name='SMA20', line=dict(color='orange', width=1)),
-                    row=1, col=1
-                )
-            
-            if 'EMA50' in df.columns:
-                fig.add_trace(
-                    go.Scatter(x=df.index, y=df['EMA50'], 
-                             name='EMA50', line=dict(color='red', width=1)),
-                    row=1, col=1
-                )
-            
             # Volume
             colors = ['#ef5350' if df['Close'].iloc[i] < df['Open'].iloc[i] 
                      else '#26a69a' for i in range(len(df))]
@@ -2153,204 +1852,66 @@ def main():
                 row=2, col=1
             )
             
-            # RSI
-            if 'RSI' in df.columns:
-                fig.add_trace(
-                    go.Scatter(x=df.index, y=df['RSI'], name='RSI',
-                             line=dict(color='purple', width=2)),
-                    row=3, col=1
-                )
-                # Add RSI lines
-                fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)
-                fig.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1)
-                fig.add_hline(y=50, line_dash="dot", line_color="gray", row=3, col=1)
-            
             fig.update_layout(
-                title=f"{symbol} - {timeframe} Chart | Live Analysis",
+                title=f"{symbol} - {timeframe} Chart",
                 template='plotly_dark',
-                height=800,
+                height=600,
                 showlegend=True,
                 xaxis_rangeslider_visible=False
             )
             
-            fig.update_xaxes(title_text="Time", row=3, col=1)
-            fig.update_yaxes(title_text="Price", row=1, col=1)
-            fig.update_yaxes(title_text="Volume", row=2, col=1)
-            fig.update_yaxes(title_text="RSI", row=3, col=1)
-            
             st.plotly_chart(fig, use_container_width=True)
-            
-            # Technical indicators panel
-            st.markdown("#### 📊 Technical Indicators")
-            col_t1, col_t2, col_t3, col_t4, col_t5 = st.columns(5)
-            
-            with col_t1:
-                current = engine.broker.get_ltp(symbol)
-                st.metric("LTP", f"₹{current:.2f}")
-            with col_t2:
-                st.metric("RSI", f"{df['RSI'].iloc[-1]:.1f}" if 'RSI' in df.columns else "N/A")
-            with col_t3:
-                st.metric("ATR", f"₹{df['ATR'].iloc[-1]:.2f}" if 'ATR' in df.columns else "N/A")
-            with col_t4:
-                st.metric("MACD", f"{df['MACD'].iloc[-1]:.2f}" if 'MACD' in df.columns else "N/A")
-            with col_t5:
-                change = ((current - df['Close'].iloc[-2]) / df['Close'].iloc[-2] * 100) if len(df) > 1 else 0
-                st.metric("Change", f"{change:+.2f}%")
-            
-            # AI Analysis
-            st.markdown("#### 🤖 AI Analysis")
-            prediction, confidence = engine.ai.predict(df, symbol)
-            
-            if prediction != 0 and confidence > 0:
-                direction = "LONG" if prediction == 1 else "SHORT"
-                col_a1, col_a2, col_a3 = st.columns(3)
-                with col_a1:
-                    st.metric("Prediction", direction)
-                with col_a2:
-                    st.metric("Confidence", f"{confidence:.1%}")
-                with col_a3:
-                    if st.button("Generate Signal", key="gen_signal"):
-                        stop_loss = engine.risk.calculate_stop_loss(df, direction)
-                        take_profit = engine.risk.calculate_take_profit(current, stop_loss, direction)
-                        quantity = engine.risk.calculate_position_size(current, stop_loss)
-                        
-                        signal = {
-                            'symbol': symbol,
-                            'direction': direction,
-                            'price': current,
-                            'stop_loss': stop_loss,
-                            'take_profit': take_profit,
-                            'quantity': quantity,
-                            'confidence': confidence,
-                            'timestamp': datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S')
-                        }
-                        engine.db.save_signal(signal)
-                        st.success("✅ Signal generated!")
-            else:
-                st.info("AI model not trained or insufficient confidence")
-        
         else:
             st.error("Chart data unavailable")
     
-    elif active_tab == 4:  # Analytics
+    # Tab 5: Analytics
+    with tabs[4]:
         st.markdown("### 📉 Performance Analytics")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("#### 📊 Trade Distribution")
-            
-            if PLOTLY_AVAILABLE:
-                labels = ['Winning', 'Losing', 'Breakeven']
-                winning = engine.stats['winning_trades']
-                losing = engine.stats['losing_trades']
-                total = engine.stats['total_trades']
-                breakeven = total - winning - losing
-                
-                fig = go.Figure(data=[
-                    go.Pie(
-                        labels=labels,
-                        values=[winning, losing, breakeven],
-                        hole=.4,
-                        marker_colors=['#00C853', '#FF5252', '#FFC107']
-                    )
-                ])
-                fig.update_layout(
-                    template='plotly_dark',
-                    title="Trade Distribution",
-                    height=400
-                )
-                st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            st.markdown("#### 📈 Key Metrics")
+            st.markdown("#### 📊 Key Metrics")
             
             st.metric("Total Trades", engine.stats['total_trades'])
             st.metric("Win Rate", f"{engine.stats['win_rate']:.1f}%")
             st.metric("Total P&L", f"₹{engine.stats['total_pnl']:+,.0f}")
             st.metric("Daily P&L", f"₹{engine.stats['daily_pnl']:+,.0f}")
-            st.metric("Daily Trades", engine.risk.daily_trades)
             st.metric("Signals Generated", engine.stats['signals_generated'])
             st.metric("Signals Executed", engine.stats['signals_executed'])
         
-        # P&L Over Time Chart
-        st.markdown("#### 📅 P&L Over Time")
-        trades_df = engine.db.get_trades(100)
-        
-        if not trades_df.empty and PLOTLY_AVAILABLE:
-            trades_df['entry_time'] = pd.to_datetime(trades_df['entry_time'])
-            trades_df = trades_df.sort_values('entry_time')
-            trades_df['cumulative_pnl'] = trades_df['pnl'].cumsum()
-            
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=trades_df['entry_time'],
-                y=trades_df['cumulative_pnl'],
-                mode='lines+markers',
-                name='Cumulative P&L',
-                line=dict(color='#4CAF50', width=3),
-                fill='tozeroy',
-                fillcolor='rgba(76, 175, 80, 0.2)'
-            ))
-            
-            fig.update_layout(
-                title="Cumulative P&L Over Time",
-                template='plotly_dark',
-                height=400,
-                xaxis_title="Date",
-                yaxis_title="P&L (₹)"
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        
-        # Risk Metrics
-        st.markdown("#### ⚠️ Risk Metrics")
-        col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-        with col_r1:
-            risk_per_trade = Config.RISK_PER_TRADE * 100
-            st.metric("Risk per Trade", f"{risk_per_trade:.1f}%")
-        with col_r2:
-            max_drawdown = 0  # Calculate if you have the data
-            st.metric("Max Drawdown", f"{max_drawdown:.1f}%")
-        with col_r3:
-            sharpe_ratio = 0  # Calculate if you have the data
-            st.metric("Sharpe Ratio", f"{sharpe_ratio:.2f}")
-        with col_r4:
-            avg_win_loss = 0  # Calculate if you have the data
-            st.metric("Avg Win/Loss", f"{avg_win_loss:.2f}")
+        with col2:
+            if PLOTLY_AVAILABLE and engine.stats['total_trades'] > 0:
+                st.markdown("#### 📈 Trade Distribution")
+                
+                labels = ['Winning', 'Losing']
+                winning = engine.stats['winning_trades']
+                losing = engine.stats['losing_trades']
+                
+                fig = go.Figure(data=[
+                    go.Pie(
+                        labels=labels,
+                        values=[winning, losing],
+                        hole=.4,
+                        marker_colors=['#00C853', '#FF5252']
+                    )
+                ])
+                fig.update_layout(
+                    template='plotly_dark',
+                    height=300
+                )
+                st.plotly_chart(fig, use_container_width=True)
     
-    elif active_tab == 5:  # Settings
+    # Tab 6: Settings
+    with tabs[5]:
         st.markdown("### ⚙️ Settings & Configuration")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("#### 🔑 Kite Connect Setup")
-            render_kite_connect_ui()
-            
-            # Connection Status
-            st.markdown("#### 🔌 Connection Status")
-            if engine.broker.connected:
-                st.success("✅ Connected to Kite")
-                try:
-                    if engine.broker.kite:
-                        profile = engine.broker.kite.profile()
-                        st.info(f"""
-                        **Account Details:**
-                        - Name: {profile['user_name']}
-                        - Email: {profile['email']}
-                        - User ID: {profile['user_id']}
-                        - Broker: {profile['broker']}
-                        """)
-                except:
-                    pass
-            else:
-                st.warning("⚠️ Not connected to Kite (Demo Mode)")
-        
-        with col2:
             st.markdown("#### 📊 Bot Configuration")
             
             with st.form("config_form"):
-                st.markdown("**Capital Management**")
                 new_capital = st.number_input(
                     "Total Capital (₹)",
                     min_value=100000,
@@ -2358,13 +1919,11 @@ def main():
                     step=100000
                 )
                 
-                # FIXED: All sliders now have consistent float types
                 new_risk = st.slider(
                     "Risk per Trade (%)",
                     0.5, 5.0, float(Config.RISK_PER_TRADE * 100), 0.1
                 )
                 
-                st.markdown("**Position Limits**")
                 new_max_positions = st.slider(
                     "Max Concurrent Positions",
                     1, 20, Config.MAX_POSITIONS
@@ -2375,61 +1934,22 @@ def main():
                     10, 100, Config.MAX_DAILY_TRADES, 5
                 )
                 
-                st.markdown("**AI Parameters**")
-                # FIXED: Convert to int for slider, then back to float
                 new_confidence = st.slider(
                     "Min Confidence (%)",
                     50, 95, int(Config.MIN_CONFIDENCE * 100), 5
                 )
                 
-                st.markdown("**Risk Management**")
-                new_atr_mult = st.slider(
-                    "ATR Multiplier",
-                    1.0, 5.0, float(Config.ATR_MULTIPLIER), 0.5
-                )
-                
-                new_rr_ratio = st.slider(
-                    "Risk:Reward Ratio",
-                    1.5, 5.0, float(Config.TAKE_PROFIT_RATIO), 0.5
-                )
-                
-                trailing_stop = st.checkbox(
-                    "Enable Trailing Stop",
-                    value=Config.TRAILING_STOP
-                )
-                
                 if st.form_submit_button("💾 Save Configuration", type="primary"):
                     Config.TOTAL_CAPITAL = new_capital
-                    Config.RISK_PER_TRADE = new_risk / 100  # Convert percentage to decimal
+                    Config.RISK_PER_TRADE = new_risk / 100
                     Config.MAX_POSITIONS = new_max_positions
                     Config.MAX_DAILY_TRADES = new_max_trades
-                    Config.MIN_CONFIDENCE = new_confidence / 100  # Convert percentage to decimal
-                    Config.ATR_MULTIPLIER = new_atr_mult
-                    Config.TAKE_PROFIT_RATIO = new_rr_ratio
-                    Config.TRAILING_STOP = trailing_stop
-                    
+                    Config.MIN_CONFIDENCE = new_confidence / 100
                     st.success("✅ Configuration saved!")
-                    st.rerun()
-            
-            st.markdown("---")
-            st.markdown("#### ⚡ Auto-Execution")
-            
-            auto_exec = st.checkbox(
-                "🤖 Auto-Execute Signals",
-                value=st.session_state.get('auto_execute', False),
-                help="Auto-execute signals when confidence > threshold"
-            )
-            st.session_state.auto_execute = auto_exec
-            
-            if auto_exec:
-                st.success("✅ Auto-execution ENABLED")
-            else:
-                st.warning("⚠️ Auto-execution DISABLED")
-            
-            st.markdown("---")
+        
+        with col2:
             st.markdown("#### 📱 System Info")
             
-            # Get system stats
             trade_count = len(engine.db.get_trades(1000))
             
             st.info(f"""
@@ -2441,44 +1961,7 @@ def main():
             **Models Trained:** {len(engine.ai.models)}
             **Stock Universe:** {len(StockUniverse.get_all_fno_stocks())} stocks
             **Total Trades:** {trade_count}
-            **Auto-refresh count:** {refresh_system.refresh_counter}
             """)
-            
-            # Database management
-            st.markdown("#### 💾 Database Management")
-            
-            if st.button("🗑️ Clear All Data", type="secondary"):
-                st.warning("⚠️ This will delete ALL trading data!")
-                confirm = st.checkbox("I understand this cannot be undone")
-                if confirm:
-                    if st.button("Yes, Delete Everything", type="primary"):
-                        try:
-                            conn = engine.db.conn
-                            cursor = conn.cursor()
-                            cursor.execute("DELETE FROM trades")
-                            cursor.execute("DELETE FROM positions")
-                            cursor.execute("DELETE FROM signals")
-                            cursor.execute("VACUUM")
-                            conn.commit()
-                            
-                            # Reset engine stats
-                            engine.stats = {
-                                'total_trades': 0,
-                                'winning_trades': 0,
-                                'losing_trades': 0,
-                                'total_pnl': 0.0,
-                                'win_rate': 0.0,
-                                'daily_pnl': 0.0,
-                                'signals_generated': 0,
-                                'signals_executed': 0
-                            }
-                            engine.risk.positions = {}
-                            engine.risk.daily_trades = 0
-                            
-                            st.success("✅ Database cleared and reset!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ Error: {e}")
     
     # Footer
     st.markdown("---")
@@ -2486,7 +1969,6 @@ def main():
     <div style='text-align: center; color: #666; padding: 1rem;'>
     <p>🚨 <b>DISCLAIMER:</b> This is for educational purposes only. Trading involves substantial risk of loss.</p>
     <p>© 2024 AI Algo Trading Bot v8.2 | Complete F&O Solution | Indian Timezone (IST)</p>
-    <p style='font-size: 0.8rem;'>Version 8.2 - Fixed Kite Connect & Auto-Refresh</p>
     </div>
     """, unsafe_allow_html=True)
 
