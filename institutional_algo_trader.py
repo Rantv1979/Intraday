@@ -1,12 +1,12 @@
 """
-AI ALGORITHMIC TRADING BOT v8.1 - FIXED SLIDER ERROR & AUTO-REFRESH
-WITH MARKET MOOD GAUGE, LIVE PRICES, AND COLORFUL BUTTON TABS
+AI ALGORITHMIC TRADING BOT v8.2 - COMPLETE FIXED VERSION
+WITH KITE CONNECT, AUTO-REFRESH, MARKET MOOD GAUGE & LIVE PRICES
 
 INSTALLATION:
 pip install streamlit pandas numpy scipy scikit-learn plotly kiteconnect pytz
 
 RUN:
-streamlit run institutional_algo_trader_fixed.py
+streamlit run institutional_algo_trader_final.py
 """
 
 import streamlit as st
@@ -21,6 +21,7 @@ import threading
 import queue
 import os
 import pytz
+from functools import wraps
 
 warnings.filterwarnings('ignore')
 
@@ -33,7 +34,7 @@ try:
     KITE_AVAILABLE = True
 except ImportError:
     KITE_AVAILABLE = False
-    st.error("❌ KiteConnect not installed! Run: pip install kiteconnect")
+    st.warning("⚠️ KiteConnect not installed! Run: pip install kiteconnect")
 
 try:
     from sklearn.ensemble import RandomForestClassifier
@@ -41,7 +42,7 @@ try:
     ML_AVAILABLE = True
 except ImportError:
     ML_AVAILABLE = False
-    st.error("❌ scikit-learn not installed! Run: pip install scikit-learn")
+    st.warning("⚠️ scikit-learn not installed! Run: pip install scikit-learn")
 
 try:
     import plotly.graph_objs as go
@@ -143,8 +144,6 @@ class MarketIndicesUpdater:
             'SENSEX': {'symbol': 'SENSEX', 'ltp': 80456.25, 'change': 0.0, 'change_pct': 0.38, 'timestamp': datetime.now(IST)}
         }
         self.last_update = datetime.now(IST)
-        self.websocket_ticker = None
-        self.websocket_running = False
     
     def update_from_kite(self, force=False):
         """Update indices data from Kite Connect"""
@@ -431,6 +430,7 @@ class KiteBroker:
             
             if not api_key or not access_token:
                 self.demo_mode = True
+                st.warning("⚠️ Kite credentials not found. Running in demo mode.")
                 return False
             
             # Initialize Kite Connect
@@ -448,11 +448,13 @@ class KiteBroker:
             self.setup_websocket(api_key, access_token)
             
             self.connected = True
+            self.demo_mode = False
             return True
             
         except Exception as e:
             st.error(f"❌ Kite connection failed: {str(e)}")
             self.demo_mode = True
+            self.connected = False
             return False
     
     def load_instruments(self):
@@ -596,6 +598,8 @@ class KiteBroker:
                 })
                 df = df.set_index('timestamp')
                 # Convert to IST
+                if df.index.tzinfo is None:
+                    df.index = df.index.tz_localize('UTC')
                 df.index = df.index.tz_convert(IST)
                 # Filter market hours
                 df = df.between_time('09:15', '15:30')
@@ -1171,7 +1175,43 @@ class TradingEngine:
         self.stats['signals_generated'] = 0
 
 # ============================================================================
-# COLORFUL BUTTON TABS - FIXED VERSION
+# AUTO-REFRESH SYSTEM - COMPLETELY FIXED
+# ============================================================================
+
+class AutoRefreshSystem:
+    """Handles auto-refresh of market data"""
+    
+    def __init__(self, refresh_interval=5):
+        self.refresh_interval = refresh_interval
+        self.last_refresh = datetime.now(IST)
+        self.refresh_counter = 0
+        
+    def should_refresh(self):
+        """Check if it's time to refresh"""
+        current_time = datetime.now(IST)
+        time_since_refresh = (current_time - self.last_refresh).total_seconds()
+        
+        if time_since_refresh >= self.refresh_interval:
+            self.last_refresh = current_time
+            self.refresh_counter += 1
+            return True
+        return False
+    
+    def get_refresh_progress(self):
+        """Get progress towards next refresh (0-1)"""
+        current_time = datetime.now(IST)
+        time_since_refresh = (current_time - self.last_refresh).total_seconds()
+        progress = min(1.0, time_since_refresh / self.refresh_interval)
+        remaining = max(0, self.refresh_interval - time_since_refresh)
+        return progress, remaining
+    
+    def force_refresh(self):
+        """Force an immediate refresh"""
+        self.last_refresh = datetime.now(IST) - timedelta(seconds=self.refresh_interval + 1)
+        return True
+
+# ============================================================================
+# COLORFUL BUTTON TABS
 # ============================================================================
 
 def render_colorful_tabs():
@@ -1207,42 +1247,143 @@ def render_colorful_tabs():
     return st.session_state.active_tab
 
 # ============================================================================
-# AUTO-REFRESH COMPONENT - FIXED VERSION
+# KITE CONNECT UI - ADDED BACK
 # ============================================================================
 
-def auto_refresh_component(refresh_interval=5):
-    """Auto-refresh component for market data"""
-    
-    # Initialize refresh tracking
-    if 'last_auto_refresh' not in st.session_state:
-        st.session_state.last_auto_refresh = datetime.now(IST)
-        st.session_state.auto_refresh_counter = 0
-    
-    # Calculate time since last refresh
-    current_time = datetime.now(IST)
-    time_since_refresh = (current_time - st.session_state.last_auto_refresh).total_seconds()
-    
-    # Check if refresh is needed
-    if time_since_refresh >= refresh_interval:
-        # Update timestamp
-        st.session_state.last_auto_refresh = current_time
-        st.session_state.auto_refresh_counter += 1
+def render_kite_connect_ui():
+    """Render Kite Connect connection UI"""
+    with st.expander("🔑 Connect to Kite Connect", expanded=False):
+        st.info("""
+        **Steps to connect:**
+        1. Get API Key from https://developers.kite.trade/
+        2. Generate access token using login URL
+        3. Paste credentials below
+        """)
         
-        # Set a flag to indicate refresh is needed
-        if 'auto_refresh_needed' not in st.session_state:
-            st.session_state.auto_refresh_needed = True
-        else:
-            st.session_state.auto_refresh_needed = True
+        col1, col2 = st.columns(2)
         
-        return True
-    
-    # Show countdown in sidebar
-    with st.sidebar:
-        remaining = max(0, refresh_interval - time_since_refresh)
-        progress = time_since_refresh / refresh_interval
-        st.progress(min(progress, 1.0), text=f"🔄 Next refresh in {int(remaining)}s")
-    
-    return False
+        with col1:
+            api_key = st.text_input(
+                "API Key",
+                value=st.session_state.get('kite_api_key', ''),
+                type="password",
+                help="Your Kite Connect API Key"
+            )
+        
+        with col2:
+            access_token = st.text_input(
+                "Access Token",
+                value=st.session_state.get('kite_access_token', ''),
+                type="password",
+                help="Generated access token"
+            )
+        
+        col_btn1, col_btn2, col_btn3 = st.columns(3)
+        
+        with col_btn1:
+            if st.button("💾 Save Credentials", type="primary", use_container_width=True):
+                if api_key and access_token:
+                    st.session_state.kite_api_key = api_key
+                    st.session_state.kite_access_token = access_token
+                    st.success("✅ Credentials saved!")
+                    
+                    # Try to connect immediately
+                    if st.session_state.get('engine'):
+                        engine = st.session_state.engine
+                        if engine.broker.connect():
+                            st.success("✅ Connected to Kite!")
+                            st.rerun()
+                        else:
+                            st.error("❌ Connection failed")
+                else:
+                    st.error("❌ Please enter both API Key and Access Token")
+        
+        with col_btn2:
+            if st.button("🔄 Test Connection", use_container_width=True):
+                if api_key and access_token:
+                    try:
+                        kite = KiteConnect(api_key=api_key)
+                        kite.set_access_token(access_token)
+                        profile = kite.profile()
+                        st.success(f"✅ Connection successful! User: {profile['user_name']}")
+                    except Exception as e:
+                        st.error(f"❌ Connection failed: {e}")
+                else:
+                    st.error("❌ Please enter credentials first")
+        
+        with col_btn3:
+            if st.button("🗑️ Clear Credentials", use_container_width=True):
+                for key in ['kite_api_key', 'kite_access_token']:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                
+                if st.session_state.get('engine'):
+                    st.session_state.engine.broker.connected = False
+                    st.session_state.engine.broker.kite = None
+                    st.session_state.engine.broker.demo_mode = True
+                
+                st.success("✅ Credentials cleared!")
+                st.rerun()
+        
+        # Token Generator
+        st.markdown("---")
+        st.markdown("#### 🔗 Generate Access Token")
+        
+        with st.form("token_generator"):
+            temp_api_key = st.text_input("Temporary API Key", type="password")
+            temp_api_secret = st.text_input("API Secret", type="password")
+            
+            if st.form_submit_button("Generate Login URL", type="secondary"):
+                if temp_api_key and temp_api_secret:
+                    try:
+                        temp_kite = KiteConnect(api_key=temp_api_key)
+                        login_url = temp_kite.login_url()
+                        
+                        st.session_state.temp_api_key = temp_api_key
+                        st.session_state.temp_api_secret = temp_api_secret
+                        st.session_state.login_url = login_url
+                        
+                        st.success("✅ Login URL generated!")
+                        st.markdown(f"[🔗 Click here to login]({login_url})")
+                    except Exception as e:
+                        st.error(f"❌ Error: {e}")
+                else:
+                    st.error("❌ Please enter both API Key and Secret")
+        
+        # Complete token generation
+        if 'login_url' in st.session_state:
+            st.markdown("---")
+            st.markdown("**Step 2: Complete Authentication**")
+            
+            with st.form("complete_auth"):
+                request_token = st.text_input("Request Token", help="From redirect URL after login")
+                
+                if st.form_submit_button("Generate Access Token", type="primary"):
+                    try:
+                        temp_kite = KiteConnect(api_key=st.session_state.temp_api_key)
+                        data = temp_kite.generate_session(
+                            request_token,
+                            api_secret=st.session_state.temp_api_secret
+                        )
+                        
+                        access_token = data["access_token"]
+                        
+                        st.success("✅ Access Token Generated!")
+                        st.code(access_token, language="text")
+                        
+                        # Auto-save
+                        st.session_state.kite_api_key = st.session_state.temp_api_key
+                        st.session_state.kite_access_token = access_token
+                        
+                        # Clean up
+                        for key in ['temp_api_key', 'temp_api_secret', 'login_url']:
+                            if key in st.session_state:
+                                del st.session_state[key]
+                        
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"❌ Failed: {e}")
 
 # ============================================================================
 # MAIN STREAMLIT APP - COMPLETE FIXED VERSION
@@ -1250,9 +1391,10 @@ def auto_refresh_component(refresh_interval=5):
 
 def main():
     st.set_page_config(
-        page_title="AI Algo Trading Bot v8.1",
+        page_title="AI Algo Trading Bot v8.2",
         page_icon="🤖",
-        layout="wide"
+        layout="wide",
+        initial_sidebar_state="expanded"
     )
     
     # Custom CSS for enhanced UI
@@ -1318,17 +1460,6 @@ def main():
         transform: translateY(-2px);
         box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     }
-    .tab-button-active {
-        background: linear-gradient(135deg, #1E88E5, #4CAF50) !important;
-        color: white !important;
-        border: none !important;
-        font-weight: bold !important;
-    }
-    .tab-button-inactive {
-        background: #2d3748 !important;
-        color: #a0aec0 !important;
-        border: 1px solid #4a5568 !important;
-    }
     .market-mood-card {
         background: linear-gradient(135deg, #1a1a2e, #16213e);
         padding: 1.5rem;
@@ -1391,13 +1522,10 @@ def main():
     if 'engine' not in st.session_state:
         st.session_state.engine = TradingEngine(Config(), demo_mode=True)
         st.session_state.market_indices = MarketIndicesUpdater(st.session_state.engine.broker)
-        st.session_state.last_refresh = datetime.now(IST)
+        st.session_state.auto_refresh_system = AutoRefreshSystem(refresh_interval=5)
         st.session_state.auto_execute = False
         st.session_state.auto_refresh = True
-        st.session_state.refresh_rate = 5  # 5 seconds for market data
         st.session_state.active_tab = 0
-        st.session_state.auto_refresh_counter = 0
-        st.session_state.last_auto_refresh = datetime.now(IST)
         
         # Auto-connect if credentials exist
         if 'kite_api_key' in st.session_state and 'kite_access_token' in st.session_state:
@@ -1406,12 +1534,15 @@ def main():
     
     engine = st.session_state.engine
     market_indices = st.session_state.market_indices
+    refresh_system = st.session_state.auto_refresh_system
     
-    # AUTO REFRESH LOGIC - FIXED
+    # ============================================================================
+    # AUTO REFRESH SYSTEM - FIXED AND WORKING
+    # ============================================================================
+    
+    # Check if we need to refresh market data
     if st.session_state.get('auto_refresh', True):
-        refresh_needed = auto_refresh_component(st.session_state.refresh_rate)
-        
-        if refresh_needed:
+        if refresh_system.should_refresh():
             # Update market indices
             market_indices.update_from_kite()
             
@@ -1426,7 +1557,7 @@ def main():
             st.rerun()
     
     # Header
-    st.markdown("<h1 class='main-header'>🤖 AI ALGORITHMIC TRADING BOT v8.1</h1>", 
+    st.markdown("<h1 class='main-header'>🤖 AI ALGORITHMIC TRADING BOT v8.2</h1>", 
                 unsafe_allow_html=True)
     st.markdown("### Professional Trading System | All 159 F&O Stocks | Live Market Data | Indian Timezone")
     
@@ -1460,18 +1591,17 @@ def main():
         """, unsafe_allow_html=True)
     
     with col_clock3:
-        time_since_refresh = (datetime.now(IST) - st.session_state.last_auto_refresh).total_seconds()
-        next_refresh = max(0, st.session_state.refresh_rate - time_since_refresh)
+        progress, remaining = refresh_system.get_refresh_progress()
         st.markdown(f"""
         <div class="clock-widget">
-            <div class="clock-time">{int(next_refresh)}s</div>
+            <div class="clock-time">{int(remaining)}s</div>
             <div class="clock-date">Next Refresh</div>
             <div style="font-size: 0.8rem; color: #1E88E5;">🔄 Auto: {'ON' if st.session_state.auto_refresh else 'OFF'}</div>
         </div>
         """, unsafe_allow_html=True)
     
     # ============================================================================
-    # MARKET MOOD GAUGE - FIXED WITH LIVE SYMBOLS
+    # MARKET MOOD GAUGE
     # ============================================================================
     st.markdown("---")
     st.markdown("### 📊 Live Market Dashboard")
@@ -1523,7 +1653,7 @@ def main():
         st.markdown(f'<h3>🎯 MARKET MOOD</h3>', unsafe_allow_html=True)
         st.markdown(f'<h2 style="color: {mood_color}">{mood}</h2>', unsafe_allow_html=True)
         st.markdown(f'<p>Avg Change: {avg_change:+.2f}%</p>', unsafe_allow_html=True)
-        st.markdown(f'<p style="font-size: 0.8rem; color: #888;">Auto-refresh: {st.session_state.refresh_rate}s</p>', unsafe_allow_html=True)
+        st.markdown(f'<p style="font-size: 0.8rem; color: #888;">Refresh: {refresh_system.refresh_interval}s</p>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
     
     st.markdown("---")
@@ -1564,9 +1694,17 @@ def main():
                        ["📈 Paper Trading", "💰 Live Trading"], 
                        index=0,
                        help="Paper trading uses demo data, Live connects to Kite")
-        engine.broker.demo_mode = "Paper" in mode
         
-        # Capital - FIXED: Removed the slider error
+        if mode == "📈 Paper Trading":
+            engine.broker.demo_mode = True
+        else:
+            engine.broker.demo_mode = False
+            # Show Kite Connect UI
+            render_kite_connect_ui()
+        
+        st.markdown("---")
+        
+        # Capital
         capital = st.number_input("Capital (₹)", 
                                  min_value=100000, 
                                  value=Config.TOTAL_CAPITAL, 
@@ -1574,12 +1712,12 @@ def main():
                                  help="Total trading capital")
         Config.TOTAL_CAPITAL = capital
         
-        # Risk - FIXED: Type consistency
+        # Risk
         risk = st.slider("Risk per Trade (%)", 0.5, 5.0, 
                         float(Config.RISK_PER_TRADE * 100), 0.1) / 100
         Config.RISK_PER_TRADE = risk
         
-        # Confidence - FIXED: Type consistency (this was the error line)
+        # Confidence
         confidence = st.slider("Min Confidence (%)", 50, 90, 
                               int(Config.MIN_CONFIDENCE * 100), 5) / 100
         Config.MIN_CONFIDENCE = confidence
@@ -1605,13 +1743,18 @@ def main():
         st.session_state.auto_refresh = auto_refresh
         
         if auto_refresh:
-            refresh_rate = st.slider("Refresh Rate (seconds)", 1, 30, 
-                                    int(st.session_state.refresh_rate))
-            st.session_state.refresh_rate = refresh_rate
+            refresh_interval = st.slider("Refresh Rate (seconds)", 1, 30, 
+                                        refresh_system.refresh_interval)
+            refresh_system.refresh_interval = refresh_interval
+            
+            # Show refresh progress
+            progress, remaining = refresh_system.get_refresh_progress()
+            st.progress(progress, text=f"Next refresh in {int(remaining)}s")
         
         # Manual Refresh Button
         if st.button("🔄 Refresh Now", use_container_width=True, type="secondary"):
             market_indices.update_from_kite()
+            refresh_system.force_refresh()
             st.success("✅ Market data refreshed!")
             st.rerun()
         
@@ -1649,7 +1792,7 @@ def main():
         # Debug Info
         st.markdown("---")
         st.markdown("### 🐛 Debug Info")
-        st.info(f"Auto-refresh counter: {st.session_state.get('auto_refresh_counter', 0)}")
+        st.info(f"Auto-refresh count: {refresh_system.refresh_counter}")
         if st.button("🔄 Force Rerun"):
             st.rerun()
     
@@ -1695,7 +1838,7 @@ def main():
         st.markdown('</div>', unsafe_allow_html=True)
     
     # ============================================================================
-    # COLORFUL BUTTON TABS - FIXED VERSION
+    # COLORFUL BUTTON TABS
     # ============================================================================
     st.markdown("---")
     active_tab = render_colorful_tabs()
@@ -2182,14 +2325,15 @@ def main():
         
         with col1:
             st.markdown("#### 🔑 Kite Connect Setup")
+            render_kite_connect_ui()
             
+            # Connection Status
+            st.markdown("#### 🔌 Connection Status")
             if engine.broker.connected:
                 st.success("✅ Connected to Kite")
-                
                 try:
                     if engine.broker.kite:
                         profile = engine.broker.kite.profile()
-                        
                         st.info(f"""
                         **Account Details:**
                         - Name: {profile['user_name']}
@@ -2199,22 +2343,8 @@ def main():
                         """)
                 except:
                     pass
-                
-                if st.button("🔌 Disconnect", type="secondary"):
-                    engine.broker.connected = False
-                    engine.broker.kite = None
-                    engine.broker.demo_mode = True
-                    if 'kite_api_key' in st.session_state:
-                        del st.session_state.kite_api_key
-                    if 'kite_access_token' in st.session_state:
-                        del st.session_state.kite_access_token
-                    st.warning("Disconnected. Running in demo mode.")
-                    st.rerun()
-            
             else:
-                # Kite setup form (kept for brevity)
-                st.warning("⚠️ Not connected to Kite")
-                st.markdown("Connect to Kite in the settings section to enable live trading.")
+                st.warning("⚠️ Not connected to Kite (Demo Mode)")
         
         with col2:
             st.markdown("#### 📊 Bot Configuration")
@@ -2311,7 +2441,7 @@ def main():
             **Models Trained:** {len(engine.ai.models)}
             **Stock Universe:** {len(StockUniverse.get_all_fno_stocks())} stocks
             **Total Trades:** {trade_count}
-            **Auto-refresh count:** {st.session_state.get('auto_refresh_counter', 0)}
+            **Auto-refresh count:** {refresh_system.refresh_counter}
             """)
             
             # Database management
@@ -2355,8 +2485,8 @@ def main():
     st.markdown("""
     <div style='text-align: center; color: #666; padding: 1rem;'>
     <p>🚨 <b>DISCLAIMER:</b> This is for educational purposes only. Trading involves substantial risk of loss.</p>
-    <p>© 2024 AI Algo Trading Bot v8.1 | Complete F&O Solution | Indian Timezone (IST)</p>
-    <p style='font-size: 0.8rem;'>Version 8.1 - Fixed Slider Error & Auto-Refresh</p>
+    <p>© 2024 AI Algo Trading Bot v8.2 | Complete F&O Solution | Indian Timezone (IST)</p>
+    <p style='font-size: 0.8rem;'>Version 8.2 - Fixed Kite Connect & Auto-Refresh</p>
     </div>
     """, unsafe_allow_html=True)
 
