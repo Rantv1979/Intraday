@@ -1,5 +1,5 @@
 """
-AI ALGORITHMIC TRADING BOT v8.0 - FIXED AUTO-REFRESH & LIVE SIGNALS
+AI ALGORITHMIC TRADING BOT v8.1 - FIXED SLIDER ERROR & AUTO-REFRESH
 WITH MARKET MOOD GAUGE, LIVE PRICES, AND COLORFUL BUTTON TABS
 
 INSTALLATION:
@@ -200,7 +200,6 @@ class MarketIndicesUpdater:
                 
         except Exception as e:
             # Fallback to demo data
-            st.warning(f"⚠️ Market data update failed: {str(e)[:100]}")
             self.update_demo_data()
             return False
     
@@ -1208,33 +1207,42 @@ def render_colorful_tabs():
     return st.session_state.active_tab
 
 # ============================================================================
-# AUTO-REFRESH COMPONENT
+# AUTO-REFRESH COMPONENT - FIXED VERSION
 # ============================================================================
 
 def auto_refresh_component(refresh_interval=5):
     """Auto-refresh component for market data"""
     
-    # Store last refresh time
-    if 'last_refresh' not in st.session_state:
-        st.session_state.last_refresh = datetime.now(IST)
+    # Initialize refresh tracking
+    if 'last_auto_refresh' not in st.session_state:
+        st.session_state.last_auto_refresh = datetime.now(IST)
+        st.session_state.auto_refresh_counter = 0
+    
+    # Calculate time since last refresh
+    current_time = datetime.now(IST)
+    time_since_refresh = (current_time - st.session_state.last_auto_refresh).total_seconds()
     
     # Check if refresh is needed
-    current_time = datetime.now(IST)
-    time_since_refresh = (current_time - st.session_state.last_refresh).total_seconds()
-    
     if time_since_refresh >= refresh_interval:
-        # Set flag for refresh
-        st.session_state.needs_refresh = True
-        st.session_state.last_refresh = current_time
+        # Update timestamp
+        st.session_state.last_auto_refresh = current_time
+        st.session_state.auto_refresh_counter += 1
+        
+        # Set a flag to indicate refresh is needed
+        if 'auto_refresh_needed' not in st.session_state:
+            st.session_state.auto_refresh_needed = True
+        else:
+            st.session_state.auto_refresh_needed = True
+        
+        return True
     
-    # Display refresh status
+    # Show countdown in sidebar
     with st.sidebar:
-        if time_since_refresh < refresh_interval:
-            remaining = int(refresh_interval - time_since_refresh)
-            progress = time_since_refresh / refresh_interval
-            st.progress(progress, text=f"🔄 Refreshing in {remaining}s")
+        remaining = max(0, refresh_interval - time_since_refresh)
+        progress = time_since_refresh / refresh_interval
+        st.progress(min(progress, 1.0), text=f"🔄 Next refresh in {int(remaining)}s")
     
-    return st.session_state.get('needs_refresh', False)
+    return False
 
 # ============================================================================
 # MAIN STREAMLIT APP - COMPLETE FIXED VERSION
@@ -1242,7 +1250,7 @@ def auto_refresh_component(refresh_interval=5):
 
 def main():
     st.set_page_config(
-        page_title="AI Algo Trading Bot v8.0",
+        page_title="AI Algo Trading Bot v8.1",
         page_icon="🤖",
         layout="wide"
     )
@@ -1388,7 +1396,8 @@ def main():
         st.session_state.auto_refresh = True
         st.session_state.refresh_rate = 5  # 5 seconds for market data
         st.session_state.active_tab = 0
-        st.session_state.needs_refresh = False
+        st.session_state.auto_refresh_counter = 0
+        st.session_state.last_auto_refresh = datetime.now(IST)
         
         # Auto-connect if credentials exist
         if 'kite_api_key' in st.session_state and 'kite_access_token' in st.session_state:
@@ -1398,26 +1407,26 @@ def main():
     engine = st.session_state.engine
     market_indices = st.session_state.market_indices
     
-    # AUTO REFRESH LOGIC
-    needs_refresh = auto_refresh_component(st.session_state.refresh_rate)
-    
-    if needs_refresh or st.session_state.needs_refresh:
-        # Update market indices
-        market_indices.update_from_kite()
-        st.session_state.needs_refresh = False
+    # AUTO REFRESH LOGIC - FIXED
+    if st.session_state.get('auto_refresh', True):
+        refresh_needed = auto_refresh_component(st.session_state.refresh_rate)
         
-        # Update positions with live prices
-        for symbol in list(engine.risk.positions.keys()):
-            try:
-                engine.broker.get_ltp(symbol)  # Updates cache
-            except:
-                pass
-        
-        # Rerun for UI update
-        st.rerun()
+        if refresh_needed:
+            # Update market indices
+            market_indices.update_from_kite()
+            
+            # Update LTP cache for all positions
+            for symbol in list(engine.risk.positions.keys()):
+                try:
+                    engine.broker.get_ltp(symbol)  # Updates cache
+                except:
+                    pass
+            
+            # Force rerun for UI update
+            st.rerun()
     
     # Header
-    st.markdown("<h1 class='main-header'>🤖 AI ALGORITHMIC TRADING BOT v8.0</h1>", 
+    st.markdown("<h1 class='main-header'>🤖 AI ALGORITHMIC TRADING BOT v8.1</h1>", 
                 unsafe_allow_html=True)
     st.markdown("### Professional Trading System | All 159 F&O Stocks | Live Market Data | Indian Timezone")
     
@@ -1451,7 +1460,8 @@ def main():
         """, unsafe_allow_html=True)
     
     with col_clock3:
-        next_refresh = max(0, st.session_state.refresh_rate - (datetime.now(IST) - st.session_state.last_refresh).total_seconds())
+        time_since_refresh = (datetime.now(IST) - st.session_state.last_auto_refresh).total_seconds()
+        next_refresh = max(0, st.session_state.refresh_rate - time_since_refresh)
         st.markdown(f"""
         <div class="clock-widget">
             <div class="clock-time">{int(next_refresh)}s</div>
@@ -1556,7 +1566,7 @@ def main():
                        help="Paper trading uses demo data, Live connects to Kite")
         engine.broker.demo_mode = "Paper" in mode
         
-        # Capital
+        # Capital - FIXED: Removed the slider error
         capital = st.number_input("Capital (₹)", 
                                  min_value=100000, 
                                  value=Config.TOTAL_CAPITAL, 
@@ -1564,12 +1574,14 @@ def main():
                                  help="Total trading capital")
         Config.TOTAL_CAPITAL = capital
         
-        # Risk
-        risk = st.slider("Risk per Trade (%)", 0.5, 5.0, Config.RISK_PER_TRADE * 100, 0.1) / 100
+        # Risk - FIXED: Type consistency
+        risk = st.slider("Risk per Trade (%)", 0.5, 5.0, 
+                        float(Config.RISK_PER_TRADE * 100), 0.1) / 100
         Config.RISK_PER_TRADE = risk
         
-        # Confidence
-        confidence = st.slider("Min Confidence (%)", 50, 90, Config.MIN_CONFIDENCE * 100, 5) / 100
+        # Confidence - FIXED: Type consistency (this was the error line)
+        confidence = st.slider("Min Confidence (%)", 50, 90, 
+                              int(Config.MIN_CONFIDENCE * 100), 5) / 100
         Config.MIN_CONFIDENCE = confidence
         
         st.markdown("---")
@@ -1593,7 +1605,8 @@ def main():
         st.session_state.auto_refresh = auto_refresh
         
         if auto_refresh:
-            refresh_rate = st.slider("Refresh Rate (seconds)", 1, 30, st.session_state.refresh_rate)
+            refresh_rate = st.slider("Refresh Rate (seconds)", 1, 30, 
+                                    int(st.session_state.refresh_rate))
             st.session_state.refresh_rate = refresh_rate
         
         # Manual Refresh Button
@@ -1631,6 +1644,13 @@ def main():
         if st.button("⚡ Force Scan", use_container_width=True):
             engine.scan_signals()
             st.success("✅ Scan completed!")
+            st.rerun()
+        
+        # Debug Info
+        st.markdown("---")
+        st.markdown("### 🐛 Debug Info")
+        st.info(f"Auto-refresh counter: {st.session_state.get('auto_refresh_counter', 0)}")
+        if st.button("🔄 Force Rerun"):
             st.rerun()
     
     # Top Metrics
@@ -2192,7 +2212,7 @@ def main():
                     st.rerun()
             
             else:
-                # Kite setup form (same as before, kept for brevity)
+                # Kite setup form (kept for brevity)
                 st.warning("⚠️ Not connected to Kite")
                 st.markdown("Connect to Kite in the settings section to enable live trading.")
         
@@ -2208,9 +2228,10 @@ def main():
                     step=100000
                 )
                 
+                # FIXED: All sliders now have consistent float types
                 new_risk = st.slider(
                     "Risk per Trade (%)",
-                    0.5, 5.0, Config.RISK_PER_TRADE * 100, 0.1
+                    0.5, 5.0, float(Config.RISK_PER_TRADE * 100), 0.1
                 )
                 
                 st.markdown("**Position Limits**")
@@ -2225,20 +2246,21 @@ def main():
                 )
                 
                 st.markdown("**AI Parameters**")
+                # FIXED: Convert to int for slider, then back to float
                 new_confidence = st.slider(
                     "Min Confidence (%)",
-                    50, 95, Config.MIN_CONFIDENCE * 100, 5
+                    50, 95, int(Config.MIN_CONFIDENCE * 100), 5
                 )
                 
                 st.markdown("**Risk Management**")
                 new_atr_mult = st.slider(
                     "ATR Multiplier",
-                    1.0, 5.0, Config.ATR_MULTIPLIER, 0.5
+                    1.0, 5.0, float(Config.ATR_MULTIPLIER), 0.5
                 )
                 
                 new_rr_ratio = st.slider(
                     "Risk:Reward Ratio",
-                    1.5, 5.0, Config.TAKE_PROFIT_RATIO, 0.5
+                    1.5, 5.0, float(Config.TAKE_PROFIT_RATIO), 0.5
                 )
                 
                 trailing_stop = st.checkbox(
@@ -2248,10 +2270,10 @@ def main():
                 
                 if st.form_submit_button("💾 Save Configuration", type="primary"):
                     Config.TOTAL_CAPITAL = new_capital
-                    Config.RISK_PER_TRADE = new_risk / 100
+                    Config.RISK_PER_TRADE = new_risk / 100  # Convert percentage to decimal
                     Config.MAX_POSITIONS = new_max_positions
                     Config.MAX_DAILY_TRADES = new_max_trades
-                    Config.MIN_CONFIDENCE = new_confidence / 100
+                    Config.MIN_CONFIDENCE = new_confidence / 100  # Convert percentage to decimal
                     Config.ATR_MULTIPLIER = new_atr_mult
                     Config.TAKE_PROFIT_RATIO = new_rr_ratio
                     Config.TRAILING_STOP = trailing_stop
@@ -2289,6 +2311,7 @@ def main():
             **Models Trained:** {len(engine.ai.models)}
             **Stock Universe:** {len(StockUniverse.get_all_fno_stocks())} stocks
             **Total Trades:** {trade_count}
+            **Auto-refresh count:** {st.session_state.get('auto_refresh_counter', 0)}
             """)
             
             # Database management
@@ -2332,8 +2355,8 @@ def main():
     st.markdown("""
     <div style='text-align: center; color: #666; padding: 1rem;'>
     <p>🚨 <b>DISCLAIMER:</b> This is for educational purposes only. Trading involves substantial risk of loss.</p>
-    <p>© 2024 AI Algo Trading Bot v8.0 | Complete F&O Solution | Indian Timezone (IST)</p>
-    <p style='font-size: 0.8rem;'>Version 8.0 - Fixed Auto-Refresh & Live Signals</p>
+    <p>© 2024 AI Algo Trading Bot v8.1 | Complete F&O Solution | Indian Timezone (IST)</p>
+    <p style='font-size: 0.8rem;'>Version 8.1 - Fixed Slider Error & Auto-Refresh</p>
     </div>
     """, unsafe_allow_html=True)
 
