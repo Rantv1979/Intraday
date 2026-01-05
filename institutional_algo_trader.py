@@ -1,4 +1,3 @@
-
 # =============================================================
 # MERGED INSTITUTIONAL ALGO TRADER - FINAL
 # Original System + Advanced Enhancements
@@ -561,7 +560,7 @@ class EnhancedSignalGenerator:
                 self.ai_engine.train_model(df, symbol)
             
             # Get prediction
-            prediction, confidence = self.ai_engine.predict(df, symbol)
+            prediction, confidence, metrics = self.ai_engine.predict(df, symbol)
             
             # Check confidence threshold
             if confidence < Config.MIN_CONFIDENCE:
@@ -1680,6 +1679,7 @@ class EnhancedRiskManager(RiskManager):
         self.max_drawdown = config.MAX_DRAWDOWN * config.TOTAL_CAPITAL
         self.sector_exposure = {}
         self.position_concentration = {}
+        self.daily_trades = 0  # Added missing attribute
     
     def can_trade(self, symbol, direction):
         """Enhanced pre-trade checks"""
@@ -1727,7 +1727,7 @@ class EnhancedRiskManager(RiskManager):
     
     def add_position(self, position):
         """Add position with risk tracking"""
-        super().add_position(position)
+        super().update_pnl(0)  # Initialize
         
         # Update sector exposure
         sector = self.get_sector(position['symbol'])
@@ -1737,6 +1737,7 @@ class EnhancedRiskManager(RiskManager):
         
         # Update position concentration
         self.position_concentration[position['symbol']] = position['entry_price'] * position['quantity']
+        self.daily_trades += 1  # Increment daily trades
     
     def update_daily_pnl(self, pnl):
         """Update daily P&L"""
@@ -1959,7 +1960,14 @@ class Database:
         ))
         self.conn.commit()
     
-    # Keep existing methods
+    def get_trades(self, limit=100):
+        """Get completed trades"""
+        cursor = self.conn.cursor()
+        cursor.execute(f'SELECT * FROM trades ORDER BY entry_time DESC LIMIT {limit}')
+        rows = cursor.fetchall()
+        columns = [description[0] for description in cursor.description]
+        return pd.DataFrame(rows, columns=columns) if rows else pd.DataFrame()
+    
     def save_trade(self, trade):
         """Save completed trade"""
         cursor = self.conn.cursor()
@@ -2314,10 +2322,12 @@ def main():
                                  step=100000)
         Config.TOTAL_CAPITAL = capital
         
-        risk = st.slider("Risk per Trade (%)", 0.5, 5.0, Config.RISK_PER_TRADE * 100, 0.1) / 100
+        # Fixed slider - using keyword arguments correctly
+        risk = st.slider("Risk per Trade (%)", min_value=0.5, max_value=5.0, value=Config.RISK_PER_TRADE * 100, step=0.1) / 100
         Config.RISK_PER_TRADE = risk
         
-        confidence = st.slider("Min Confidence (%)", 50, 90, Config.MIN_CONFIDENCE * 100, 5) / 100
+        # Fixed slider - using keyword arguments correctly
+        confidence = st.slider("Min Confidence (%)", min_value=50, max_value=90, value=int(Config.MIN_CONFIDENCE * 100), step=5) / 100
         Config.MIN_CONFIDENCE = confidence
         
         st.markdown("---")
@@ -2339,7 +2349,7 @@ def main():
         st.session_state.auto_refresh = auto_refresh
         
         if auto_refresh:
-            refresh_rate = st.slider("Update Interval (seconds)", 1, 10, 2, key="refresh_rate_slider")
+            refresh_rate = st.slider("Update Interval (seconds)", min_value=1, max_value=10, value=2, key="refresh_rate_slider")
             st.session_state.refresh_rate = refresh_rate
             
             col_ref1, col_ref2 = st.columns(2)
@@ -2491,7 +2501,8 @@ def main():
         
         with col_s3:
             st.metric("AI Models Trained", len(engine.ai.models))
-            st.metric("Total Scans", engine.signal_generator.signal_history)
+            # Fixed: signal_history is a list, not an integer
+            st.metric("Total Signals", len(engine.signal_generator.signal_history))
     
     elif active_tab == 1:  # Positions
         st.markdown("### 📈 Real-Time Positions")
@@ -2785,8 +2796,22 @@ def main():
         with col1:
             st.markdown("#### 🔑 Kite Connect Setup")
             
-            # Keep existing Kite Connect setup code
-            # ...
+            st.markdown("**API Credentials**")
+            api_key = st.text_input("API Key", type="password", key="kite_api_input")
+            if api_key:
+                st.session_state.kite_api_key = api_key
+            
+            access_token = st.text_input("Access Token", type="password", key="kite_token_input")
+            if access_token:
+                st.session_state.kite_access_token = access_token
+            
+            if st.button("🔌 Connect to Kite", key="connect_kite"):
+                with st.spinner("Connecting..."):
+                    if engine.broker.connect():
+                        st.success("✅ Connected to Kite!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Connection failed")
             
             st.markdown("#### 📊 Real-Time Configuration")
             
@@ -2795,17 +2820,17 @@ def main():
                 
                 signal_expiry = st.slider(
                     "Signal Expiry (seconds)",
-                    10, 300, Config.SIGNAL_EXPIRY_SECONDS, 10
+                    min_value=10, max_value=300, value=Config.SIGNAL_EXPIRY_SECONDS, step=10
                 )
                 
                 signal_refresh = st.slider(
                     "Signal Refresh Interval (seconds)",
-                    1, 60, Config.SIGNAL_REFRESH_INTERVAL, 1
+                    min_value=1, max_value=60, value=Config.SIGNAL_REFRESH_INTERVAL, step=1
                 )
                 
                 price_trigger = st.slider(
                     "Price Movement Trigger (%)",
-                    0.1, 5.0, 0.5, 0.1
+                    min_value=0.1, max_value=5.0, value=0.5, step=0.1
                 )
                 
                 if st.form_submit_button("💾 Save Real-Time Settings"):
@@ -2858,228 +2883,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# ===================== ADVANCED EXTENSIONS ====================
-# The following section is merged and non-breaking
-# =============================================================
-
-
-"""
-INSTITUTIONAL ALGO TRADER - FINAL PRODUCTION FILE
-------------------------------------------------
-✔ Risk Manager (fixed inheritance)
-✔ Auto-refresh signals
-✔ Positional + Intraday support
-✔ Walk-forward testing
-✔ Monte-Carlo risk stress
-✔ Smart Money Concepts (Order Blocks + FVG)
-✔ Broker-ready execution switch
-✔ VPS-safe runner
-
-Author: Final integrated build
-"""
-
-import numpy as np
-import pandas as pd
-import time
-from datetime import datetime
-import logging
-import random
-
-# =============================================================
-# CONFIG
-# =============================================================
-class Config:
-    TOTAL_CAPITAL = 2_000_000
-    RISK_PER_TRADE = 0.01
-    MAX_DAILY_LOSS = 0.02
-    MAX_DRAWDOWN = 0.05
-    RR_RATIO = 2.5
-    MAX_POSITIONS = 10
-    MODE = "PAPER"   # PAPER or LIVE
-
-# =============================================================
-# LOGGING
-# =============================================================
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(message)s")
-log = logging.getLogger("ALGO")
-
-# =============================================================
-# BASE RISK MANAGER
-# =============================================================
-class RiskManager:
-    def __init__(self, config):
-        self.config = config
-        self.start_capital = config.TOTAL_CAPITAL
-        self.capital = config.TOTAL_CAPITAL
-        self.peak_capital = config.TOTAL_CAPITAL
-        self.daily_pnl = 0.0
-        self.positions = {}
-
-    def update_pnl(self, pnl):
-        self.capital += pnl
-        self.daily_pnl += pnl
-        self.peak_capital = max(self.peak_capital, self.capital)
-
-    def drawdown(self):
-        return (self.peak_capital - self.capital) / self.peak_capital
-
-    def can_trade(self):
-        if abs(self.daily_pnl) / self.start_capital >= self.config.MAX_DAILY_LOSS:
-            return False
-        if self.drawdown() >= self.config.MAX_DRAWDOWN:
-            return False
-        return True
-
-# =============================================================
-# ENHANCED RISK MANAGER
-# =============================================================
-class EnhancedRiskManager(RiskManager):
-    def can_trade(self):
-        ok, reason = self.risk_ok()
-        if not ok:
-            return False, reason
-        if len(self.positions) >= self.config.MAX_POSITIONS:
-            return False, "Max positions reached"
-        return True, "Approved"
-
-    def position_size(self, entry, stop):
-        risk_amt = self.capital * self.config.RISK_PER_TRADE
-        per_unit = abs(entry - stop)
-        return int(risk_amt / per_unit) if per_unit > 0 else 0
-
-# =============================================================
-# SMC MODULE (Order Block + FVG)
-# =============================================================
-class SMC:
-    @staticmethod
-    def order_block(df):
-        return df["Close"].iloc[-1] > df["Open"].iloc[-5]
-
-    @staticmethod
-    def fair_value_gap(df):
-        return abs(df["High"].iloc[-2] - df["Low"].iloc[-1]) > df["ATR"].iloc[-1]
-
-# =============================================================
-# TECHNICALS
-# =============================================================
-def indicators(df):
-    df["EMA20"] = df["Close"].ewm(span=20).mean()
-    df["EMA50"] = df["Close"].ewm(span=50).mean()
-    df["RSI"] = 50 + np.random.randn(len(df)) * 5
-    df["ATR"] = df["High"] - df["Low"]
-    return df
-
-# =============================================================
-# SIGNAL ENGINE
-# =============================================================
-class SignalEngine:
-    def generate(self, df):
-        trend = df["EMA20"].iloc[-1] > df["EMA50"].iloc[-1]
-        smc_ok = SMC.order_block(df) and SMC.fair_value_gap(df)
-        if trend and smc_ok:
-            return "LONG"
-        if not trend and smc_ok:
-            return "SHORT"
-        return None
-
-# =============================================================
-# POSITION MANAGER
-# =============================================================
-class PositionManager:
-    def __init__(self, risk):
-        self.risk = risk
-        self.positions = {}
-
-    def open(self, symbol, side, entry, sl, tp, qty):
-        self.positions[symbol] = {
-            "side": side,
-            "entry": entry,
-            "sl": sl,
-            "tp": tp,
-            "qty": qty
-        }
-
-    def update(self, symbol, price):
-        pos = self.positions.get(symbol)
-        if not pos:
-            return
-        pnl = (price - pos["entry"]) * pos["qty"] if pos["side"] == "LONG" else (pos["entry"] - price) * pos["qty"]
-        if price <= pos["sl"] or price >= pos["tp"]:
-            self.close(symbol, pnl)
-
-    def close(self, symbol, pnl):
-        self.risk.update_pnl(pnl)
-        log.info(f"CLOSED {symbol} | PnL {pnl:.2f}")
-        self.positions.pop(symbol)
-
-# =============================================================
-# WALK-FORWARD TEST
-# =============================================================
-def walk_forward(df, engine):
-    results = []
-    for i in range(100, len(df), 50):
-        slice_df = df.iloc[:i]
-        signal = engine.generate(slice_df)
-        results.append(signal)
-    return results
-
-# =============================================================
-# MONTE CARLO STRESS
-# =============================================================
-def monte_carlo(returns, runs=500):
-    equity = []
-    for _ in range(runs):
-        pnl = np.sum(np.random.choice(returns, size=len(returns)))
-        equity.append(pnl)
-    return np.percentile(equity, [5, 50, 95])
-
-# =============================================================
-# BROKER EXECUTION (PAPER/LIVE READY)
-# =============================================================
-class Broker:
-    def place_order(self, symbol, side, qty):
-        if Config.MODE == "PAPER":
-            log.info(f"PAPER ORDER {symbol} {side} {qty}")
-        else:
-            log.info(f"LIVE ORDER {symbol} {side} {qty}")
-
-# =============================================================
-# MAIN ENGINE (VPS SAFE)
-# =============================================================
-class AlgoEngine:
-    def __init__(self):
-        self.risk = EnhancedRiskManager(Config)
-        self.signal_engine = SignalEngine()
-        self.positions = PositionManager(self.risk)
-        self.broker = Broker()
-
-    def on_bar(self, symbol, df):
-        df = indicators(df)
-        if symbol in self.positions.positions:
-            self.positions.update(symbol, df["Close"].iloc[-1])
-            return
-
-        if not self.risk.can_trade():
-            return
-
-        signal = self.signal_engine.generate(df)
-        if not signal:
-            return
-
-        entry = df["Close"].iloc[-1]
-        sl = entry * (0.98 if signal == "LONG" else 1.02)
-        tp = entry + (entry - sl) * Config.RR_RATIO if signal == "LONG" else entry - (sl - entry) * Config.RR_RATIO
-        qty = self.risk.position_size(entry, sl)
-
-        if qty > 0:
-            self.broker.place_order(symbol, signal, qty)
-            self.positions.open(symbol, signal, entry, sl, tp, qty)
-
-# =============================================================
-# BOOT
-# =============================================================
-if __name__ == "__main__":
-    log.info("INSTITUTIONAL ALGO TRADER FINAL - READY")
-
