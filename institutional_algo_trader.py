@@ -825,6 +825,27 @@ class RiskManager:
 
 class TradingEngine:
     """Main trading engine"""
+   
+def real_time_signal_refresh(self):
+    """Process WebSocket ticks in real-time for signal generation"""
+    while not self.broker.ticks_queue.empty():
+        try:
+            tick = self.broker.ticks_queue.get_nowait()
+            symbol = self.get_symbol_from_token(tick['instrument_token'])
+            
+            # Immediate price update
+            self.broker.ltp_cache[symbol] = tick['last_price']
+            
+            # Check if this symbol has an open position
+            if symbol in self.risk.positions:
+                self.check_position_exit(symbol, tick)
+            
+            # Generate fresh signal if conditions met
+            if self.should_generate_signal(symbol):
+                self.generate_immediate_signal(symbol, tick)
+                
+        except queue.Empty:
+            break
     
     def __init__(self, config, demo_mode=True):
         self.config = config
