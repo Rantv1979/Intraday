@@ -2936,6 +2936,14 @@ class RiskManager:
 # ENHANCED RISK MANAGER
 # =============================================================
 class EnhancedRiskManager(RiskManager):
+    def can_trade(self):
+        ok, reason = self.risk_ok()
+        if not ok:
+            return False, reason
+        if len(self.positions) >= self.config.MAX_POSITIONS:
+            return False, "Max positions reached"
+        return True, "Approved"
+
     def position_size(self, entry, stop):
         risk_amt = self.capital * self.config.RISK_PER_TRADE
         per_unit = abs(entry - stop)
