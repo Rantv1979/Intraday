@@ -40,6 +40,33 @@ from collections import deque
 import redis
 import logging
 
+class RiskManager:
+    def __init__(self, config):
+        self.config = config
+        self.start_capital = config.TOTAL_CAPITAL
+        self.capital = config.TOTAL_CAPITAL
+        self.peak_capital = config.TOTAL_CAPITAL
+        self.daily_pnl = 0.0
+        self.positions = {}
+
+    def update_pnl(self, pnl):
+        self.capital += pnl
+        self.daily_pnl += pnl
+        self.peak_capital = max(self.peak_capital, self.capital)
+
+    def drawdown_pct(self):
+        return (self.peak_capital - self.capital) / self.peak_capital
+
+    def daily_loss_pct(self):
+        return abs(self.daily_pnl) / self.start_capital
+
+    def risk_ok(self):
+        if self.daily_loss_pct() >= self.config.MAX_DAILY_LOSS:
+            return False, "Daily loss limit breached"
+        if self.drawdown_pct() >= self.config.MAX_DRAWDOWN:
+            return False, "Max drawdown breached"
+        return True, "OK"
+
 warnings.filterwarnings('ignore')
 
 # Setup logging
