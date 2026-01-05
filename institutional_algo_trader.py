@@ -1633,6 +1633,51 @@ class EnhancedTradingEngine:
         # This would use EnhancedMarketIndicesUpdater
         return "NEUTRAL"
 
+
+# ============================================================================
+# BASE RISK MANAGER (FOUNDATION)
+# ============================================================================
+
+class RiskManager:
+    """Base risk manager providing capital, drawdown and trade accounting"""
+
+    def __init__(self, config):
+        self.config = config
+        self.start_capital = config.TOTAL_CAPITAL
+        self.current_capital = config.TOTAL_CAPITAL
+        self.peak_capital = config.TOTAL_CAPITAL
+        self.daily_pnl = 0.0
+        self.daily_trades = 0
+        self.positions = {}
+
+    def update_pnl(self, pnl):
+        self.daily_pnl += pnl
+        self.current_capital += pnl
+        self.peak_capital = max(self.peak_capital, self.current_capital)
+
+    def drawdown_pct(self):
+        if self.peak_capital <= 0:
+            return 0.0
+        return (self.peak_capital - self.current_capital) / self.peak_capital
+
+    def daily_loss_pct(self):
+        return abs(self.daily_pnl) / self.start_capital if self.start_capital > 0 else 0.0
+
+    def add_position(self, position):
+        self.positions[position['symbol']] = position
+        self.daily_trades += 1
+
+    def remove_position(self, symbol):
+        self.positions.pop(symbol, None)
+
+    def base_risk_checks(self):
+        if self.daily_loss_pct() >= self.config.MAX_DAILY_LOSS:
+            return False, "Daily loss limit breached"
+        if self.drawdown_pct() >= self.config.MAX_DRAWDOWN:
+            return False, "Max drawdown breached"
+        return True, "OK"
+
+
 # ============================================================================
 # ENHANCED RISK MANAGER
 # ============================================================================
