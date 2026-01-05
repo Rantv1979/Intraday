@@ -11,3 +11,4 @@ TA-Lib>=0.4.28
 XGBoost
 TextBlob
 yfinance
+redis>=5.0.0
