@@ -12,7 +12,7 @@ ENHANCEMENTS:
 7. Connection resiliency and auto-reconnect
 
 INSTALLATION:
-pip install streamlit pandas numpy scikit-learn plotly kiteconnect
+pip install streamlit pandas numpy scikit-learn plotly kiteconnect redis
 """
 
 import streamlit as st
@@ -28,7 +28,10 @@ import queue
 import os
 import hashlib
 import json
+import asyncio
+import concurrent.futures
 from collections import deque
+import redis
 import logging
 
 warnings.filterwarnings('ignore')
@@ -525,7 +528,7 @@ class EnhancedSignalGenerator:
                 self.ai_engine.train_model(df, symbol)
             
             # Get prediction
-            prediction, confidence, metrics = self.ai_engine.predict(df, symbol)
+            prediction, confidence = self.ai_engine.predict(df, symbol)
             
             # Check confidence threshold
             if confidence < Config.MIN_CONFIDENCE:
@@ -562,8 +565,7 @@ class EnhancedSignalGenerator:
                 'prediction': prediction,
                 'timestamp': datetime.now(),
                 'signal_id': f"{symbol}_{int(time.time())}",
-                'status': 'ACTIVE',
-                'metrics': metrics
+                'status': 'ACTIVE'
             }
             
             # Validate signal
@@ -1635,49 +1637,16 @@ class EnhancedTradingEngine:
 # ENHANCED RISK MANAGER
 # ============================================================================
 
-class EnhancedRiskManager:
+class EnhancedRiskManager(RiskManager):
     """Enhanced risk manager with real-time checks"""
     
     def __init__(self, config):
-        self.config = config
-        self.positions = {}
-        self.daily_trades = 0
+        super().__init__(config)
         self.daily_pnl = 0.0
         self.max_daily_loss = config.MAX_DAILY_LOSS * config.TOTAL_CAPITAL
         self.max_drawdown = config.MAX_DRAWDOWN * config.TOTAL_CAPITAL
         self.sector_exposure = {}
         self.position_concentration = {}
-    
-    def calculate_position_size(self, price, stop_loss):
-        """Calculate position size based on risk"""
-        risk_amount = self.config.TOTAL_CAPITAL * self.config.RISK_PER_TRADE
-        risk_per_share = abs(price - stop_loss)
-        
-        if risk_per_share <= 0:
-            return 0
-        
-        quantity = int(risk_amount / risk_per_share)
-        return max(1, quantity)
-    
-    def calculate_stop_loss(self, df, direction):
-        """Calculate stop loss using ATR"""
-        atr = df['ATR'].iloc[-1] if 'ATR' in df.columns else df['Close'].iloc[-1] * 0.02
-        current_price = df['Close'].iloc[-1]
-        
-        if direction == 'LONG':
-            return current_price - (atr * self.config.ATR_MULTIPLIER)
-        else:
-            return current_price + (atr * self.config.ATR_MULTIPLIER)
-    
-    def calculate_take_profit(self, entry, stop_loss, direction):
-        """Calculate take profit target"""
-        risk = abs(entry - stop_loss)
-        reward = risk * self.config.TAKE_PROFIT_RATIO
-        
-        if direction == 'LONG':
-            return entry + reward
-        else:
-            return entry - reward
     
     def can_trade(self, symbol, direction):
         """Enhanced pre-trade checks"""
@@ -1725,8 +1694,7 @@ class EnhancedRiskManager:
     
     def add_position(self, position):
         """Add position with risk tracking"""
-        self.positions[position['symbol']] = position
-        self.daily_trades += 1
+        super().add_position(position)
         
         # Update sector exposure
         sector = self.get_sector(position['symbol'])
@@ -2490,7 +2458,7 @@ def main():
         
         with col_s3:
             st.metric("AI Models Trained", len(engine.ai.models))
-            st.metric("Total Scans", len(engine.signal_generator.signal_history))
+            st.metric("Total Scans", engine.signal_generator.signal_history)
     
     elif active_tab == 1:  # Positions
         st.markdown("### 📈 Real-Time Positions")
