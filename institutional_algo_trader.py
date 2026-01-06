@@ -2867,155 +2867,254 @@ def main():
             st.plotly_chart(fig, use_container_width=True)
     
     elif active_tab == 5:  # Settings
-        st.markdown("### ⚙️ Settings & Configuration")
-        
-        tab1, tab2 = st.tabs(["🔑 Kite Connect", "⚡ System Settings"])
-        
-        with tab1:
-    st.markdown("#### 🔑 Kite Connect Login")
+    st.markdown("### ⚙️ Settings & Configuration")
     
-    col1, col2 = st.columns(2)
+    # Create tabs within the Settings tab
+    tab1, tab2 = st.tabs(["🔑 Kite Connect", "⚡ System Settings"])
     
-    with col1:
-        st.markdown("**Step 1: Enter API Key**")
-        api_key = st.text_input(
-            "API Key (from Kite Developer Console)",
-            type="password",
-            value=st.session_state.get('kite_api_key', ''),
-            key="kite_api_input",
-            help="Get this from https://developers.kite.trade/"
-        )
+    with tab1:
+        st.markdown("#### 🔑 Kite Connect Login")
         
-        if api_key:
-            # Validate API key format
-            if len(api_key) < 10 or len(api_key) > 50:
-                st.warning("⚠️ API Key format looks incorrect")
-            else:
-                st.session_state.kite_api_key = api_key
+        col1, col2 = st.columns(2)
         
-        # Show API Key format example
-        st.markdown("""
-        <div style="background: #1e1e1e; padding: 10px; border-radius: 5px; margin: 10px 0;">
-        <small>API Key usually looks like: <code>abc123def456</code> or <code>jf9s3k8d7m2n</code></small>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if st.button("🔗 Generate Login URL", key="generate_url"):
-            if not api_key:
-                st.error("❌ Please enter API Key first")
-            else:
-                try:
-                    # Test if API key is valid by creating KiteConnect instance
-                    if KITE_AVAILABLE:
-                        kite = KiteConnect(api_key=api_key)
-                        login_url = kite.login_url()
-                        
-                        if login_url:
-                            st.session_state.kite_login_step = 1
-                            st.session_state.kite_login_url = login_url
-                            st.success("✅ Login URL generated successfully!")
+        with col1:
+            st.markdown("**Step 1: Enter API Key**")
+            api_key = st.text_input(
+                "API Key (from Kite Developer Console)",
+                type="password",
+                value=st.session_state.get('kite_api_key', ''),
+                key="kite_api_input",
+                help="Get this from https://developers.kite.trade/"
+            )
+            
+            if api_key:
+                # Validate API key format
+                if len(api_key) < 10 or len(api_key) > 50:
+                    st.warning("⚠️ API Key format looks incorrect")
+                else:
+                    st.session_state.kite_api_key = api_key
+            
+            # Show API Key format example
+            st.markdown("""
+            <div style="background: #1e1e1e; padding: 10px; border-radius: 5px; margin: 10px 0;">
+            <small>API Key usually looks like: <code>abc123def456</code> or <code>jf9s3k8d7m2n</code></small>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if st.button("🔗 Generate Login URL", key="generate_url"):
+                if not api_key:
+                    st.error("❌ Please enter API Key first")
+                else:
+                    try:
+                        # Test if API key is valid by creating KiteConnect instance
+                        if KITE_AVAILABLE:
+                            kite = KiteConnect(api_key=api_key)
+                            login_url = kite.login_url()
                             
-                            # Display the URL in a clickable format
-                            st.markdown(f"""
-                            **Step 2: Login to Kite**
-                            
-                            1. Click the link below to login:
-                            [🔗 **Click here to Login to Zerodha Kite**]({login_url})
-                            
-                            2. Login with your Zerodha credentials
-                            3. Authorize the application
-                            4. After login, you'll be redirected to a URL like:
-                            `https://your-redirect-url.com/?request_token=ABCD123456&action=login&status=success`
-                            
-                            5. Copy the **request_token** from the URL (the part after `request_token=` )
-                            """)
-                            
-                            # Also show the URL in a text box for easy copy
-                            st.text_input("Login URL (copy if link doesn't work):", 
-                                        value=login_url, 
-                                        disabled=True)
+                            if login_url:
+                                st.session_state.kite_login_step = 1
+                                st.session_state.kite_login_url = login_url
+                                st.success("✅ Login URL generated successfully!")
+                                
+                                # Display the URL in a clickable format
+                                st.markdown(f"""
+                                **Step 2: Login to Kite**
+                                
+                                1. Click the link below to login:
+                                [🔗 **Click here to Login to Zerodha Kite**]({login_url})
+                                
+                                2. Login with your Zerodha credentials
+                                3. Authorize the application
+                                4. After login, you'll be redirected to a URL like:
+                                `https://your-redirect-url.com/?request_token=ABCD123456&action=login&status=success`
+                                
+                                5. Copy the **request_token** from the URL (the part after `request_token=` )
+                                """)
+                                
+                                # Also show the URL in a text box for easy copy
+                                st.text_input("Login URL (copy if link doesn't work):", 
+                                            value=login_url, 
+                                            disabled=True)
+                            else:
+                                st.error("❌ Failed to generate login URL")
                         else:
-                            st.error("❌ Failed to generate login URL")
+                            st.error("❌ KiteConnect not installed")
+                            
+                    except Exception as e:
+                        st.error(f"❌ Error generating login URL: {str(e)}")
+                        st.info("Make sure your API Key is correct and active in Kite Developer Console")
+        
+        with col2:
+            if st.session_state.get('kite_login_step', 0) >= 1:
+                st.markdown("**Step 3: Enter Request Token**")
+                request_token = st.text_input(
+                    "Paste Request Token from URL",
+                    type="password",
+                    value=st.session_state.get('kite_request_token', ''),
+                    key="request_token_input",
+                    help="Copy from the URL after login (looks like: ABC123DEF456)"
+                )
+                
+                if request_token:
+                    st.session_state.kite_request_token = request_token
+                
+                api_secret = st.text_input(
+                    "API Secret (from Kite Developer Console)",
+                    type="password",
+                    value="",
+                    key="api_secret_input",
+                    help="Get this from https://developers.kite.trade/ under your app"
+                )
+                
+                if st.button("🔑 Generate Access Token", key="generate_token"):
+                    if not api_key or not request_token or not api_secret:
+                        st.error("❌ Please enter all fields")
                     else:
-                        st.error("❌ KiteConnect not installed")
-                        
-                except Exception as e:
-                    st.error(f"❌ Error generating login URL: {str(e)}")
-                    st.info("Make sure your API Key is correct and active in Kite Developer Console")
+                        with st.spinner("Generating access token..."):
+                            try:
+                                # Generate access token
+                                kite = KiteConnect(api_key=api_key)
+                                data = kite.generate_session(request_token, api_secret=api_secret)
+                                access_token = data["access_token"]
+                                
+                                if access_token:
+                                    st.session_state.kite_access_token = access_token
+                                    st.session_state.kite_login_step = 2
+                                    st.success("✅ Access token generated successfully!")
+                                    
+                                    # Save to environment
+                                    os.environ['KITE_API_KEY'] = api_key
+                                    os.environ['KITE_ACCESS_TOKEN'] = access_token
+                                    
+                                    # Save to session state
+                                    st.session_state.kite_api_key = api_key
+                                    st.session_state.kite_access_token = access_token
+                                    
+                                    # Try to connect
+                                    st.info("🔄 Attempting to connect to Kite...")
+                                    if engine.broker.connect():
+                                        st.success("✅ Connected to Kite Connect!")
+                                        st.rerun()
+                                    else:
+                                        st.error("❌ Connection failed. Check if API key is correct.")
+                                else:
+                                    st.error("❌ Failed to generate access token")
+                                    
+                            except Exception as e:
+                                st.error(f"❌ Error generating access token: {str(e)}")
+                                st.info("""
+                                Common issues:
+                                1. API Secret is incorrect
+                                2. Request token has expired (get a new one)
+                                3. API Key is invalid
+                                """)
             
             # Connection Status
             st.markdown("---")
             st.markdown("#### 📡 Connection Status")
             
-            if engine.broker.connected:
-                st.success("✅ Connected to Kite Connect")
+            status_col1, status_col2 = st.columns(2)
+            with status_col1:
+                if engine.broker.connected:
+                    st.success("✅ Connected to Kite")
+                else:
+                    st.warning("⚠️ Not Connected (Demo Mode)")
+            
+            with status_col2:
                 if engine.broker.websocket_running:
                     st.success("✅ WebSocket Active")
-                else:
+                elif engine.broker.connected:
                     st.warning("⚠️ WebSocket Not Active")
-            else:
-                st.warning("⚠️ Not Connected (Demo Mode)")
             
             # Manual Connection
-            if st.button("🔌 Connect Manually", key="connect_manual"):
-                with st.spinner("Connecting..."):
-                    if engine.broker.connect():
-                        st.success("✅ Connected!")
-                        st.rerun()
+            if st.button("🔌 Test Connection", key="test_connection"):
+                with st.spinner("Testing connection..."):
+                    if engine.broker.connected:
+                        try:
+                            profile = engine.broker.kite.profile()
+                            st.success(f"✅ Connected as: {profile['user_name']}")
+                        except Exception as e:
+                            st.error(f"❌ Connection test failed: {e}")
                     else:
-                        st.error("❌ Connection failed")
+                        st.info("ℹ️ Not connected. Please login first.")
+    
+    with tab2:
+        col_sys1, col_sys2 = st.columns(2)
         
-        with tab2:
-            col_sys1, col_sys2 = st.columns(2)
+        with col_sys1:
+            st.markdown("#### 📊 System Information")
             
-            with col_sys1:
-                st.markdown("#### 📊 System Information")
-                
-                st.info(f"""
-                **System Status:** {'🟢 Running' if engine.running else '🔴 Stopped'}
-                **Trading Mode:** {'💰 Live' if not engine.broker.demo_mode else '📈 Paper'}
-                **Kite Connection:** {'🟢 Connected' if engine.broker.connected else '🔴 Disconnected'}
-                **WebSocket:** {'🟢 Active' if engine.broker.websocket_running else '🔴 Inactive'}
-                **Real-Time Updates:** {'🟢 ON' if st.session_state.get('auto_refresh', False) else '🔴 OFF'}
-                **Auto-Execution:** {'🟢 ON' if st.session_state.get('auto_execute', False) else '🔴 OFF'}
-                **AI Models Trained:** {len(engine.ai.models)}
-                **Active Signals:** {len(engine.signal_generator.active_signals)}
-                **Active Positions:** {len(engine.position_manager.positions)}
-                **Market Updates:** {market_indices.update_counter}
-                **Total Refreshes:** {st.session_state.refresh_counter}
-                **F&O Stocks:** {len(StockUniverse.get_all_fno_stocks())}
-                """)
+            # Get current status
+            system_status = "🟢 Running" if engine.running else "🔴 Stopped"
+            trading_mode = "💰 Live" if not engine.broker.demo_mode else "📈 Paper"
+            kite_status = "🟢 Connected" if engine.broker.connected else "🔴 Disconnected"
+            ws_status = "🟢 Active" if engine.broker.websocket_running else "🔴 Inactive"
+            rt_status = "🟢 ON" if st.session_state.get('auto_refresh', False) else "🔴 OFF"
+            auto_status = "🟢 ON" if st.session_state.get('auto_execute', False) else "🔴 OFF"
             
-            with col_sys2:
-                st.markdown("#### ⚡ System Configuration")
+            st.info(f"""
+            **System Status:** {system_status}
+            **Trading Mode:** {trading_mode}
+            **Kite Connection:** {kite_status}
+            **WebSocket:** {ws_status}
+            **Real-Time Updates:** {rt_status}
+            **Auto-Execution:** {auto_status}
+            **AI Models Trained:** {len(engine.ai.models)}
+            **Active Signals:** {len(engine.signal_generator.active_signals)}
+            **Active Positions:** {len(engine.position_manager.positions)}
+            **Market Updates:** {market_indices.update_counter}
+            **Total Refreshes:** {st.session_state.refresh_counter}
+            **F&O Stocks:** {len(StockUniverse.get_all_fno_stocks())}
+            """)
+        
+        with col_sys2:
+            st.markdown("#### ⚡ System Configuration")
+            
+            with st.form("system_config"):
+                st.markdown("**Signal Settings**")
                 
-                with st.form("system_config"):
-                    st.markdown("**Signal Settings**")
-                    
-                    signal_expiry = st.slider(
-                        "Signal Expiry (seconds)",
-                        min_value=10, max_value=300, 
-                        value=Config.SIGNAL_EXPIRY_SECONDS, step=10
-                    )
-                    
-                    signal_refresh = st.slider(
-                        "Signal Refresh Interval (seconds)",
-                        min_value=1, max_value=60, 
-                        value=Config.SIGNAL_REFRESH_INTERVAL, step=1
-                    )
-                    
-                    price_trigger = st.slider(
-                        "Price Movement Trigger (%)",
-                        min_value=0.1, max_value=5.0, 
-                        value=0.5, step=0.1
-                    )
-                    
-                    if st.form_submit_button("💾 Save System Settings"):
-                        Config.SIGNAL_EXPIRY_SECONDS = signal_expiry
-                        Config.SIGNAL_REFRESH_INTERVAL = signal_refresh
-                        engine.signal_generator.price_movement_threshold = price_trigger
-                        st.success("✅ System settings saved!")
-                        st.rerun()
+                signal_expiry = st.slider(
+                    "Signal Expiry (seconds)",
+                    min_value=10, max_value=300, 
+                    value=Config.SIGNAL_EXPIRY_SECONDS, step=10
+                )
+                
+                signal_refresh = st.slider(
+                    "Signal Refresh Interval (seconds)",
+                    min_value=1, max_value=60, 
+                    value=Config.SIGNAL_REFRESH_INTERVAL, step=1
+                )
+                
+                price_trigger = st.slider(
+                    "Price Movement Trigger (%)",
+                    min_value=0.1, max_value=5.0, 
+                    value=0.5, step=0.1
+                )
+                
+                # Add more settings
+                st.markdown("**Risk Settings**")
+                
+                max_positions = st.slider(
+                    "Max Positions",
+                    min_value=1, max_value=20,
+                    value=Config.MAX_POSITIONS, step=1
+                )
+                
+                max_daily_trades = st.slider(
+                    "Max Daily Trades",
+                    min_value=1, max_value=100,
+                    value=Config.MAX_DAILY_TRADES, step=1
+                )
+                
+                if st.form_submit_button("💾 Save System Settings"):
+                    Config.SIGNAL_EXPIRY_SECONDS = signal_expiry
+                    Config.SIGNAL_REFRESH_INTERVAL = signal_refresh
+                    Config.MAX_POSITIONS = max_positions
+                    Config.MAX_DAILY_TRADES = max_daily_trades
+                    engine.signal_generator.price_movement_threshold = price_trigger
+                    st.success("✅ System settings saved!")
+                    time.sleep(1)
+                    st.rerun()
     
     # Footer
     st.markdown("---")
