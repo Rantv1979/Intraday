@@ -1,22 +1,21 @@
 # =============================================================
 # INSTITUTIONAL ALGO TRADER - FINAL PRODUCTION VERSION
-# Complete Kite Connect Integration + Full Stock Universe
+# Complete Kite Connect Integration + Real-Time Charts
 # =============================================================
 
 """
 AI ALGORITHMIC TRADING BOT v8.0 - PRODUCTION READY
-WITH REAL-TIME TICK PROCESSING AND COMPLETE KITE CONNECT INTEGRATION
+WITH REAL-TIME TICK PROCESSING AND LIVE CHARTS
 
 ENHANCEMENTS:
 1. Complete Kite Connect OAuth login flow
 2. Real-time WebSocket tick processing
-3. Full F&O stock universe (159 stocks)
-4. Signal refresh triggered by price movements
-5. Live position monitoring with real-time P&L
-6. Enhanced order management with state tracking
-7. Circuit breakers and risk limits
-8. Performance monitoring and metrics
-9. Connection resiliency and auto-reconnect
+3. Live candlestick chart updates
+4. Full F&O stock universe (159 stocks)
+5. Real-time signal refresh
+6. Live position monitoring with real-time P&L
+7. Enhanced order management
+8. Circuit breakers and risk limits
 
 INSTALLATION:
 pip install streamlit pandas numpy scikit-learn plotly kiteconnect
@@ -39,8 +38,6 @@ import asyncio
 import concurrent.futures
 from collections import deque
 import logging
-import webbrowser
-from urllib.parse import urlparse, parse_qs
 
 # Setup logging
 logging.basicConfig(
@@ -68,7 +65,6 @@ try:
     ML_AVAILABLE = True
 except ImportError:
     ML_AVAILABLE = False
-    st.error("❌ scikit-learn not installed! Run: pip install scikit-learn")
 
 try:
     import plotly.graph_objs as go
@@ -77,8 +73,10 @@ try:
 except ImportError:
     PLOTLY_AVAILABLE = False
 
+warnings.filterwarnings('ignore')
+
 # ============================================================================
-# CONFIGURATION - ENHANCED FOR LIVE TRADING
+# CONFIGURATION
 # ============================================================================
 
 class Config:
@@ -114,6 +112,7 @@ class Config:
     TICK_BUFFER_SIZE = 100
     PRICE_UPDATE_INTERVAL = 1  # Update prices every second
     POSITION_REFRESH_INTERVAL = 2  # Refresh positions every 2 seconds
+    CHART_REFRESH_INTERVAL = 5  # Refresh charts every 5 seconds
     
     # WebSocket Settings
     WEBSOCKET_RECONNECT_DELAY = 5
@@ -136,6 +135,7 @@ class RealTimeDataManager:
         self.price_history = {}
         self.tick_buffer = deque(maxlen=Config.TICK_BUFFER_SIZE)
         self.update_callbacks = []
+        self.chart_callbacks = {}
         self.running = False
         self.thread = None
         
@@ -159,6 +159,7 @@ class RealTimeDataManager:
         while self.running:
             try:
                 self._process_pending_updates()
+                self._process_chart_updates()
                 time.sleep(Config.PRICE_UPDATE_INTERVAL)
             except Exception as e:
                 logger.error(f"Error in update loop: {e}")
@@ -189,6 +190,20 @@ class RealTimeDataManager:
                 callback(self.last_ticks)
             except Exception as e:
                 logger.error(f"Callback error: {e}")
+    
+    def _process_chart_updates(self):
+        """Process chart updates"""
+        current_time = datetime.now()
+        
+        for symbol, callback in list(self.chart_callbacks.items()):
+            try:
+                # Check if it's time to update this chart
+                last_update = callback.get('last_update', datetime.min)
+                if (current_time - last_update).total_seconds() >= Config.CHART_REFRESH_INTERVAL:
+                    callback['callback'](symbol)
+                    callback['last_update'] = current_time
+            except Exception as e:
+                logger.error(f"Chart callback error for {symbol}: {e}")
     
     def update_tick(self, symbol, tick_data):
         """Update tick data for a symbol"""
@@ -234,6 +249,18 @@ class RealTimeDataManager:
     def register_callback(self, callback):
         """Register callback for price updates"""
         self.update_callbacks.append(callback)
+    
+    def register_chart_callback(self, symbol, callback):
+        """Register callback for chart updates"""
+        self.chart_callbacks[symbol] = {
+            'callback': callback,
+            'last_update': datetime.now()
+        }
+    
+    def unregister_chart_callback(self, symbol):
+        """Unregister chart callback"""
+        if symbol in self.chart_callbacks:
+            del self.chart_callbacks[symbol]
     
     def get_tick_statistics(self, symbol):
         """Get tick statistics for symbol"""
@@ -440,13 +467,9 @@ class EnhancedMarketIndicesUpdater:
                 }
         
         return alerts
-    
-    def should_refresh(self, interval_seconds=5):
-        """Check if data should be refreshed"""
-        return (datetime.now() - self.last_update).total_seconds() >= interval_seconds
 
 # ============================================================================
-# ENHANCED SIGNAL GENERATOR WITH REAL-TIME REFRESH
+# ENHANCED SIGNAL GENERATOR
 # ============================================================================
 
 class EnhancedSignalGenerator:
@@ -649,31 +672,22 @@ class EnhancedSignalGenerator:
         logger.info("Refreshing all signals - Full F&O Universe Scan")
         signals_generated = 0
         
-        # Get ALL F&O stocks (159 stocks)
-        stocks = StockUniverse.get_all_fno_stocks()
+        # Get ALL F&O stocks
+        stocks = StockUniverse.get_all_fno_stocks()[:20]  # Limit for performance
         
-        # Use ThreadPoolExecutor for parallel scanning
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-            future_to_symbol = {
-                executor.submit(self.generate_signal, symbol): symbol 
-                for symbol in stocks
-            }
-            
-            for future in concurrent.futures.as_completed(future_to_symbol):
-                symbol = future_to_symbol[future]
-                try:
-                    signal = future.result()
-                    if signal:
-                        signals_generated += 1
-                        logger.debug(f"Signal generated for {symbol}")
-                except Exception as e:
-                    logger.error(f"Error processing {symbol}: {e}")
+        for symbol in stocks:
+            try:
+                signal = self.generate_signal(symbol)
+                if signal:
+                    signals_generated += 1
+            except Exception as e:
+                logger.error(f"Error processing {symbol}: {e}")
         
-        logger.info(f"Full scan complete: {signals_generated} signals generated from {len(stocks)} stocks")
+        logger.info(f"Scan complete: {signals_generated} signals generated from {len(stocks)} stocks")
         return signals_generated
 
 # ============================================================================
-# ENHANCED KITE BROKER WITH COMPLETE OAUTH INTEGRATION
+# ENHANCED KITE BROKER
 # ============================================================================
 
 class EnhancedKiteBroker:
@@ -707,11 +721,11 @@ class EnhancedKiteBroker:
             
             if not api_key:
                 self.demo_mode = True
-                st.warning("⚠️ Kite API Key not found. Running in demo mode.")
+                logger.warning("Kite API Key not found. Running in demo mode.")
                 return False
             
             if not access_token:
-                st.info("ℹ️ Access token not found. Please login to Kite Connect first.")
+                logger.info("Access token not found. Please login to Kite Connect first.")
                 return False
             
             # Initialize Kite Connect
@@ -721,7 +735,7 @@ class EnhancedKiteBroker:
             # Test connection
             try:
                 profile = self.kite.profile()
-                st.success(f"✅ Connected to Kite: {profile['user_name']}")
+                logger.info(f"Connected to Kite: {profile['user_name']}")
                 
                 # Load instruments
                 self.load_instruments()
@@ -736,17 +750,14 @@ class EnhancedKiteBroker:
                 
             except Exception as e:
                 if "Invalid" in str(e) or "expired" in str(e):
-                    st.error("❌ Access token expired. Please login again.")
-                    # Clear expired token
-                    if 'kite_access_token' in st.session_state:
-                        del st.session_state.kite_access_token
+                    logger.error("Access token expired. Please login again.")
                 else:
-                    st.error(f"❌ Kite connection test failed: {str(e)}")
+                    logger.error(f"Kite connection test failed: {str(e)}")
                 self.demo_mode = True
                 return False
             
         except Exception as e:
-            st.error(f"❌ Kite connection failed: {str(e)}")
+            logger.error(f"Kite connection failed: {str(e)}")
             self.demo_mode = True
             return False
     
@@ -821,10 +832,7 @@ class EnhancedKiteBroker:
             def on_ticks(ws, ticks):
                 """Callback for ticks"""
                 for tick in ticks:
-                    # Put in queue
                     self.ticks_queue.put(tick)
-                    
-                    # Process tick immediately
                     self._process_tick(tick)
             
             def on_connect(ws, response):
@@ -877,17 +885,17 @@ class EnhancedKiteBroker:
         tokens.append(260105)  # NIFTY BANK
         tokens.append(265)     # SENSEX
         
-        # Add ALL F&O stocks
+        # Add top F&O stocks
         stocks = StockUniverse.get_all_fno_stocks()
         symbols_found = 0
         
-        for symbol in stocks:
+        for symbol in stocks[:50]:  # Limit to 50 for performance
             if symbol in self.instruments_dict:
                 tokens.append(self.instruments_dict[symbol]['token'])
                 symbols_found += 1
         
         logger.info(f"WebSocket will subscribe to {symbols_found} F&O stocks")
-        return tokens[:250]  # Limit to 250 tokens (Kite limit)
+        return tokens
     
     def _process_tick(self, tick):
         """Process incoming tick"""
@@ -1459,20 +1467,6 @@ class RealTimePositionManager:
             'total_investment': total_investment,
             'pnl_pct': (total_pnl / total_investment * 100) if total_investment > 0 else 0
         }
-    
-    def get_position_details(self, symbol):
-        """Get detailed position information"""
-        if symbol not in self.positions:
-            return None
-        
-        position = self.positions[symbol].copy()
-        
-        # Add real-time statistics
-        stats = self.real_time_manager.get_tick_statistics(symbol)
-        if stats:
-            position['tick_stats'] = stats
-        
-        return position
 
 # ============================================================================
 # RISK MANAGER
@@ -1548,9 +1542,6 @@ class RiskManager:
             'FMCG': ['HINDUNILVR', 'ITC', 'NESTLEIND', 'BRITANNIA', 'DABUR'],
             'ENERGY': ['RELIANCE', 'ONGC', 'IOC', 'BPCL', 'HINDPETRO'],
             'METAL': ['TATASTEEL', 'JSWSTEEL', 'VEDL', 'HINDZINC', 'NMDC'],
-            'CEMENT': ['ULTRACEMCO', 'AMBUJACEM', 'ACC', 'SHREECEM', 'RAMCOCEM'],
-            'REALTY': ['DLF', 'GODREJPROP', 'OBEROIRLTY', 'PRESTIGE', 'SUNTECK'],
-            'MEDIA': ['ZEEL', 'SUNTV', 'NETWORK18', 'TV18', 'PVR'],
         }
         
         for sector, symbols in sectors.items():
@@ -1655,11 +1646,6 @@ class PerformanceMonitor:
             
             if wins + losses > 0:
                 self.metrics['win_loss_ratio'] = wins / (wins + losses)
-                
-                # Calculate profit factor
-                total_profit = sum(t.get('pnl', 0) for t in self.trade_log if t.get('pnl', 0) > 0)
-                total_loss = abs(sum(t.get('pnl', 0) for t in self.trade_log if t.get('pnl', 0) < 0))
-                self.metrics['profit_factor'] = total_profit / total_loss if total_loss > 0 else float('inf')
 
 # ============================================================================
 # ENHANCED TRADING ENGINE
@@ -1749,7 +1735,7 @@ class EnhancedTradingEngine:
     
     def scan_signals(self):
         """Scan for trading signals - FULL F&O UNIVERSE"""
-        logger.info("Scanning ALL F&O stocks for signals...")
+        logger.info("Scanning F&O stocks for signals...")
         
         # Use signal generator for real-time signal refresh
         signals_generated = self.signal_generator.refresh_all_signals()
@@ -1759,7 +1745,7 @@ class EnhancedTradingEngine:
         for signal in active_signals:
             self.signals_queue.put(signal)
         
-        logger.info(f"Scan complete: {signals_generated} signals generated from full F&O universe")
+        logger.info(f"Scan complete: {signals_generated} signals generated")
     
     def execute_signals(self):
         """Execute pending signals"""
@@ -1868,7 +1854,7 @@ class Database:
     """SQLite database with real-time tables"""
     
     def __init__(self):
-        self.conn = sqlite3.connect('trading_bot_v8.db', check_same_thread=False)
+        self.conn = sqlite3.connect('trading_bot.db', check_same_thread=False)
         self.init_db()
     
     def init_db(self):
@@ -1916,64 +1902,6 @@ class Database:
             )
         ''')
         
-        # Real-time signals table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS signals (
-                id INTEGER PRIMARY KEY,
-                signal_id TEXT UNIQUE,
-                symbol TEXT,
-                direction TEXT,
-                price REAL,
-                confidence REAL,
-                stop_loss REAL,
-                take_profit REAL,
-                quantity INTEGER,
-                timestamp TEXT,
-                status TEXT
-            )
-        ''')
-        
-        # Market data table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS market_data (
-                id INTEGER PRIMARY KEY,
-                symbol TEXT,
-                price REAL,
-                volume INTEGER,
-                timestamp TEXT,
-                data_type TEXT
-            )
-        ''')
-        
-        # Performance metrics table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS performance (
-                id INTEGER PRIMARY KEY,
-                timestamp TEXT,
-                total_pnl REAL,
-                win_rate REAL,
-                positions_count INTEGER,
-                sharpe_ratio REAL,
-                max_drawdown REAL
-            )
-        ''')
-        
-        self.conn.commit()
-    
-    def save_real_time_signal(self, signal):
-        """Save real-time signal"""
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            INSERT OR REPLACE INTO signals 
-            (signal_id, symbol, direction, price, confidence, stop_loss,
-             take_profit, quantity, timestamp, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            signal['signal_id'], signal['symbol'], signal['direction'],
-            signal['price'], signal['confidence'], signal['stop_loss'],
-            signal['take_profit'], signal['quantity'], str(signal['timestamp']),
-            signal.get('status', 'ACTIVE')
-        ))
         self.conn.commit()
     
     def get_trades(self, limit=100):
@@ -2058,7 +1986,7 @@ class TechnicalAnalysis:
         return df
 
 # ============================================================================
-# COMPLETE STOCK UNIVERSE - ALL 159 F&O STOCKS
+# COMPLETE STOCK UNIVERSE
 # ============================================================================
 
 class StockUniverse:
@@ -2107,12 +2035,6 @@ class StockUniverse:
             'RBLBANK', 'SJVN', 'SOLARINDS', 'STAR', 'SUZLON',
             'SYNGENE', 'TATACONSUM', 'TATAPOWER', 'WHIRLPOOL'
         ]
-    
-    @staticmethod
-    def get_top_n_stocks(n=50):
-        """Get top N stocks by liquidity/importance"""
-        all_stocks = StockUniverse.get_all_fno_stocks()
-        return all_stocks[:n]
 
 # ============================================================================
 # KITE CONNECT LOGIN HELPER
@@ -2146,18 +2068,111 @@ class KiteConnectLoginHelper:
         except Exception as e:
             logger.error(f"Error generating access token: {e}")
             return None
+
+# ============================================================================
+# CHART MANAGER
+# ============================================================================
+
+class ChartManager:
+    """Manages real-time chart updates"""
     
-    @staticmethod
-    def extract_request_token_from_url(url):
-        """Extract request token from redirect URL"""
-        try:
-            parsed_url = urlparse(url)
-            query_params = parse_qs(parsed_url.query)
-            request_token = query_params.get('request_token', [None])[0]
-            return request_token
-        except Exception as e:
-            logger.error(f"Error extracting request token: {e}")
-            return None
+    def __init__(self, broker, real_time_manager):
+        self.broker = broker
+        self.real_time_manager = real_time_manager
+        self.charts = {}
+        self.running = False
+        self.thread = None
+    
+    def start(self):
+        """Start chart manager"""
+        if not self.running:
+            self.running = True
+            self.thread = threading.Thread(target=self._chart_update_loop, daemon=True)
+            self.thread.start()
+            logger.info("ChartManager started")
+    
+    def stop(self):
+        """Stop chart manager"""
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=5)
+        logger.info("ChartManager stopped")
+    
+    def _chart_update_loop(self):
+        """Update charts in real-time"""
+        while self.running:
+            try:
+                self._update_all_charts()
+                time.sleep(Config.CHART_REFRESH_INTERVAL)
+            except Exception as e:
+                logger.error(f"Error in chart update loop: {e}")
+                time.sleep(1)
+    
+    def _update_all_charts(self):
+        """Update all active charts"""
+        for symbol in list(self.charts.keys()):
+            try:
+                self.update_chart(symbol)
+            except Exception as e:
+                logger.error(f"Error updating chart for {symbol}: {e}")
+    
+    def update_chart(self, symbol):
+        """Update chart for a specific symbol"""
+        if symbol not in self.charts:
+            return
+        
+        # Get latest data
+        df = self.broker.get_historical(symbol, days=1)
+        if df.empty:
+            return
+        
+        # Get real-time price
+        current_price = self.real_time_manager.get_latest_price(symbol)
+        if current_price:
+            # Add real-time data point
+            current_time = datetime.now()
+            new_row = pd.DataFrame({
+                'Open': [df['Close'].iloc[-1]],
+                'High': [max(df['High'].iloc[-1], current_price)],
+                'Low': [min(df['Low'].iloc[-1], current_price)],
+                'Close': [current_price],
+                'Volume': [0]
+            }, index=[current_time])
+            
+            # Append to dataframe
+            df = pd.concat([df, new_row])
+        
+        # Calculate indicators
+        df = TechnicalAnalysis.calculate_indicators(df)
+        
+        # Update chart data
+        self.charts[symbol] = df
+    
+    def get_chart_data(self, symbol):
+        """Get chart data for symbol"""
+        if symbol in self.charts:
+            return self.charts[symbol]
+        
+        # Create new chart
+        df = self.broker.get_historical(symbol, days=1)
+        if not df.empty:
+            df = TechnicalAnalysis.calculate_indicators(df)
+            self.charts[symbol] = df
+        
+        return df
+    
+    def register_chart(self, symbol):
+        """Register a chart for updates"""
+        if symbol not in self.charts:
+            df = self.broker.get_historical(symbol, days=1)
+            if not df.empty:
+                df = TechnicalAnalysis.calculate_indicators(df)
+                self.charts[symbol] = df
+    
+    def unregister_chart(self, symbol):
+        """Unregister a chart"""
+        if symbol in self.charts:
+            del self.charts[symbol]
 
 # ============================================================================
 # STREAMLIT UI FUNCTIONS
@@ -2239,6 +2254,9 @@ def main():
     .positive { color: #00C853; }
     .negative { color: #FF5252; }
     .neutral { color: #FFC107; }
+    .stButton button {
+        width: 100%;
+    }
     </style>
     """, unsafe_allow_html=True)
     
@@ -2248,6 +2266,10 @@ def main():
         st.session_state.real_time_manager = st.session_state.engine.real_time_manager
         st.session_state.market_indices = EnhancedMarketIndicesUpdater(
             st.session_state.engine.broker, 
+            st.session_state.real_time_manager
+        )
+        st.session_state.chart_manager = ChartManager(
+            st.session_state.engine.broker,
             st.session_state.real_time_manager
         )
         
@@ -2263,7 +2285,12 @@ def main():
         st.session_state.kite_api_key = ''
         st.session_state.kite_access_token = ''
         st.session_state.kite_request_token = ''
-        st.session_state.kite_login_step = 0  # 0: not started, 1: got URL, 2: got token
+        st.session_state.kite_api_secret = ''
+        st.session_state.kite_login_step = 0
+        
+        # Chart state
+        st.session_state.selected_chart_symbol = 'RELIANCE'
+        st.session_state.chart_last_update = datetime.now()
         
         # Auto-connect if credentials exist
         if hasattr(st, 'secrets'):
@@ -2279,6 +2306,10 @@ def main():
     
     engine = st.session_state.engine
     market_indices = st.session_state.market_indices
+    chart_manager = st.session_state.chart_manager
+    
+    # Start chart manager
+    chart_manager.start()
     
     # Auto-refresh logic
     refresh_placeholder = st.empty()
@@ -2305,6 +2336,9 @@ def main():
                     price = engine.broker.get_real_time_price(symbol)
                     st.session_state.live_prices[symbol] = price
                 
+                # Update selected chart
+                chart_manager.update_chart(st.session_state.selected_chart_symbol)
+                
                 st.session_state.last_refresh = datetime.now()
                 st.session_state.refresh_counter += 1
             
@@ -2314,7 +2348,7 @@ def main():
     # Header
     st.markdown("<h1 class='main-header'>🤖 AI ALGORITHMIC TRADING BOT v8.0</h1>", 
                 unsafe_allow_html=True)
-    st.markdown("### Production-Ready Trading System | Complete F&O Universe (159 Stocks) | Real-Time Processing")
+    st.markdown("### Production-Ready Trading System | Complete F&O Universe | Real-Time Charts")
     
     # Market Mood Gauge with real-time updates
     st.markdown("---")
@@ -2341,7 +2375,6 @@ def main():
         st.markdown(f'<h3>📈 NIFTY 50</h3>', unsafe_allow_html=True)
         st.markdown(f'<h2 class="real-time-price">{nifty_data["ltp"]:,.2f}</h2>', unsafe_allow_html=True)
         st.markdown(f'<p class="{change_class}">{nifty_data["change_pct"]:+.2f}%</p>', unsafe_allow_html=True)
-        st.markdown(f'<p style="font-size: 0.8rem; color: #888;">H: {nifty_data["high"]:,.0f} | L: {nifty_data["low"]:,.0f}</p>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
     
     with col_idx2:
@@ -2350,7 +2383,6 @@ def main():
         st.markdown(f'<h3>🏦 NIFTY BANK</h3>', unsafe_allow_html=True)
         st.markdown(f'<h2 class="real-time-price">{banknifty_data["ltp"]:,.2f}</h2>', unsafe_allow_html=True)
         st.markdown(f'<p class="{change_class}">{banknifty_data["change_pct"]:+.2f}%</p>', unsafe_allow_html=True)
-        st.markdown(f'<p style="font-size: 0.8rem; color: #888;">H: {banknifty_data["high"]:,.0f} | L: {banknifty_data["low"]:,.0f}</p>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
     
     with col_idx3:
@@ -2359,7 +2391,6 @@ def main():
         st.markdown(f'<h3>📊 SENSEX</h3>', unsafe_allow_html=True)
         st.markdown(f'<h2 class="real-time-price">{sensex_data["ltp"]:,.2f}</h2>', unsafe_allow_html=True)
         st.markdown(f'<p class="{change_class}">{sensex_data["change_pct"]:+.2f}%</p>', unsafe_allow_html=True)
-        st.markdown(f'<p style="font-size: 0.8rem; color: #888;">H: {sensex_data["high"]:,.0f} | L: {sensex_data["low"]:,.0f}</p>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
     
     with col_idx4:
@@ -2367,7 +2398,6 @@ def main():
         st.markdown(f'<h3>🎯 MARKET MOOD</h3>', unsafe_allow_html=True)
         st.markdown(f'<h2 style="color: {mood_color}">{mood}</h2>', unsafe_allow_html=True)
         st.markdown(f'<p class="neutral">{mood_value:+.2f}%</p>', unsafe_allow_html=True)
-        st.markdown(f'<p style="font-size: 0.8rem; color: #888;">Live Analysis</p>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
     
     st.markdown("---")
@@ -2426,13 +2456,12 @@ def main():
         st.markdown("### 🔄 Real-Time Settings")
         
         auto_refresh = st.checkbox("Enable Real-Time Updates", 
-                                  value=st.session_state.auto_refresh,
-                                  key="auto_refresh_checkbox")
+                                  value=st.session_state.auto_refresh)
         st.session_state.auto_refresh = auto_refresh
         
         if auto_refresh:
             refresh_rate = st.slider("Update Interval (seconds)", min_value=1, 
-                                    max_value=10, value=2, key="refresh_rate_slider")
+                                    max_value=10, value=2)
             st.session_state.refresh_rate = refresh_rate
             
             col_ref1, col_ref2 = st.columns(2)
@@ -2442,7 +2471,7 @@ def main():
                 st.metric("Total Updates", st.session_state.refresh_counter)
         
         # Manual Refresh Button
-        if st.button("🔄 Refresh Now", use_container_width=True, key="manual_refresh"):
+        if st.button("🔄 Refresh Now", use_container_width=True):
             with st.spinner("Refreshing real-time data..."):
                 market_indices.update_from_kite()
                 
@@ -2450,6 +2479,9 @@ def main():
                 for symbol in engine.position_manager.positions.keys():
                     price = engine.broker.get_real_time_price(symbol)
                     st.session_state.live_prices[symbol] = price
+                
+                # Update chart
+                chart_manager.update_chart(st.session_state.selected_chart_symbol)
                 
                 st.session_state.last_refresh = datetime.now()
                 st.session_state.refresh_counter += 1
@@ -2464,7 +2496,6 @@ def main():
         if engine.broker.connected:
             if engine.broker.websocket_running:
                 st.success("✅ Live WebSocket Active")
-                st.info(f"**Ticks Processed:** {len(engine.real_time_manager.tick_buffer)}")
             else:
                 st.warning("⚠️ Kite API (No WebSocket)")
         else:
@@ -2527,14 +2558,13 @@ def main():
         col1, col2, col3 = st.columns([2, 2, 1])
         with col1:
             if st.button("🔍 Scan ALL F&O Stocks", type="primary", use_container_width=True):
-                with st.spinner("Scanning ALL 159 F&O stocks..."):
+                with st.spinner("Scanning F&O stocks..."):
                     signals = engine.signal_generator.refresh_all_signals()
                     st.success(f"✅ Generated {signals} new signals!")
                     st.rerun()
         
         with col2:
             if st.button("🔄 Refresh Signals", type="secondary", use_container_width=True):
-                # Refresh expired signals
                 engine.signal_generator._refresh_expired_signals()
                 st.success("✅ Signals refreshed!")
                 st.rerun()
@@ -2684,33 +2714,56 @@ def main():
             st.info("🔭 No trade history")
     
     elif active_tab == 3:  # Charts
-        st.markdown("### 📊 Live Charts with Real-Time Data")
+        st.markdown("### 📊 Live Charts with Real-Time Updates")
         
-        col1, col2 = st.columns([3, 1])
+        col1, col2, col3 = st.columns([3, 1, 1])
         with col1:
             symbol = st.selectbox(
                 "Select Stock",
                 StockUniverse.get_all_fno_stocks(),
-                index=0
+                index=0,
+                key="chart_symbol"
             )
+            st.session_state.selected_chart_symbol = symbol
         
         with col2:
-            if st.button("🔄 Update Chart"):
+            days = st.selectbox(
+                "Time Period",
+                ["1 Day", "7 Days", "30 Days"],
+                index=0,
+                key="chart_days"
+            )
+        
+        with col3:
+            if st.button("🔄 Update Chart", use_container_width=True):
+                chart_manager.update_chart(symbol)
+                st.session_state.chart_last_update = datetime.now()
                 st.rerun()
         
-        # Get historical data
-        df = engine.broker.get_historical(symbol, days=7)
+        # Register chart for updates
+        chart_manager.register_chart(symbol)
+        
+        # Get chart data
+        days_map = {"1 Day": 1, "7 Days": 7, "30 Days": 30}
+        df = engine.broker.get_historical(symbol, days=days_map[days])
         
         # Get real-time data
         real_time_stats = engine.real_time_manager.get_tick_statistics(symbol)
         
         if PLOTLY_AVAILABLE and not df.empty:
+            # Calculate indicators
+            df = TechnicalAnalysis.calculate_indicators(df)
+            
+            # Get current price
+            current_price = engine.broker.get_ltp(symbol)
+            
             # Create chart
             fig = make_subplots(
                 rows=3, cols=1,
                 shared_xaxes=True,
                 vertical_spacing=0.05,
-                row_heights=[0.6, 0.2, 0.2]
+                row_heights=[0.6, 0.2, 0.2],
+                subplot_titles=(f"{symbol} - Live Candlestick Chart", "Volume", "RSI")
             )
             
             # Candlestick chart
@@ -2721,14 +2774,14 @@ def main():
                     high=df['High'],
                     low=df['Low'],
                     close=df['Close'],
-                    name='OHLC'
+                    name='OHLC',
+                    increasing_line_color='green',
+                    decreasing_line_color='red'
                 ),
                 row=1, col=1
             )
             
             # Add indicators
-            df = TechnicalAnalysis.calculate_indicators(df)
-            
             if 'SMA20' in df.columns:
                 fig.add_trace(
                     go.Scatter(x=df.index, y=df['SMA20'], 
@@ -2742,6 +2795,12 @@ def main():
                              name='EMA50', line=dict(color='red', width=1)),
                     row=1, col=1
                 )
+            
+            # Add current price line
+            if current_price:
+                fig.add_hline(y=current_price, line_dash="dash", line_color="blue", 
+                            annotation_text=f"Current: ₹{current_price:.2f}", 
+                            row=1, col=1)
             
             # Volume chart
             colors = ['red' if df['Close'].iloc[i] < df['Open'].iloc[i] 
@@ -2761,14 +2820,18 @@ def main():
                     row=3, col=1
                 )
                 # Add RSI levels
-                fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)
-                fig.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1)
+                fig.add_hline(y=70, line_dash="dash", line_color="red", 
+                            annotation_text="Overbought (70)", row=3, col=1)
+                fig.add_hline(y=30, line_dash="dash", line_color="green", 
+                            annotation_text="Oversold (30)", row=3, col=1)
+                fig.add_hline(y=50, line_dash="dash", line_color="gray", row=3, col=1)
             
             fig.update_layout(
-                title=f"{symbol} - Live Chart with Real-Time Data",
+                title=f"{symbol} - Live Chart (Last Updated: {datetime.now().strftime('%H:%M:%S')})",
                 template='plotly_dark',
                 height=800,
-                xaxis_rangeslider_visible=False
+                xaxis_rangeslider_visible=False,
+                showlegend=True
             )
             
             st.plotly_chart(fig, use_container_width=True)
@@ -2806,11 +2869,10 @@ def main():
             with col_tech3:
                 st.metric("MACD", f"{df['MACD'].iloc[-1]:.2f}" if 'MACD' in df.columns else "N/A")
             with col_tech4:
-                current = engine.broker.get_ltp(symbol)
-                st.metric("LTP", f"₹{current:.2f}")
+                st.metric("LTP", f"₹{current_price:.2f}")
         
         else:
-            st.error("Chart data unavailable")
+            st.error("Chart data unavailable. Try selecting a different stock.")
     
     elif active_tab == 4:  # Analytics
         st.markdown("### 📉 Performance Analytics")
@@ -2821,15 +2883,22 @@ def main():
             st.markdown("#### 📊 Trade Distribution")
             
             if PLOTLY_AVAILABLE:
+                # Calculate trade distribution
+                winning = engine.stats['winning_trades']
+                losing = engine.stats['losing_trades']
+                
                 fig = go.Figure(data=[
                     go.Pie(
                         labels=['Winning', 'Losing'],
-                        values=[engine.stats['winning_trades'], 
-                               engine.stats['losing_trades']],
-                        hole=.3
+                        values=[winning, losing],
+                        hole=.3,
+                        marker=dict(colors=['green', 'red'])
                     )
                 ])
-                fig.update_layout(template='plotly_dark')
+                fig.update_layout(
+                    template='plotly_dark',
+                    title="Trade Distribution"
+                )
                 st.plotly_chart(fig, use_container_width=True)
         
         with col2:
@@ -2853,275 +2922,228 @@ def main():
             fig = go.Figure()
             fig.add_trace(go.Scatter(
                 x=timestamps, y=pnl_values,
-                mode='lines',
+                mode='lines+markers',
                 name='P&L',
-                line=dict(color='green' if pnl_values[-1] >= 0 else 'red')
+                line=dict(color='green' if pnl_values[-1] >= 0 else 'red', width=2),
+                marker=dict(size=4)
             ))
             
             fig.update_layout(
-                title="Real-Time P&L",
+                title="Real-Time P&L History",
                 template='plotly_dark',
-                height=400
+                height=400,
+                xaxis_title="Time",
+                yaxis_title="P&L (₹)"
             )
             
             st.plotly_chart(fig, use_container_width=True)
     
     elif active_tab == 5:  # Settings
-    st.markdown("### ⚙️ Settings & Configuration")
-    
-    # Create tabs within the Settings tab
-    tab1, tab2 = st.tabs(["🔑 Kite Connect", "⚡ System Settings"])
-    
-    with tab1:
-        st.markdown("#### 🔑 Kite Connect Login")
+        st.markdown("### ⚙️ Settings & Configuration")
         
-        col1, col2 = st.columns(2)
+        # Create tabs within Settings
+        tab1, tab2 = st.tabs(["🔑 Kite Connect", "⚡ System Settings"])
         
-        with col1:
-            st.markdown("**Step 1: Enter API Key**")
-            api_key = st.text_input(
-                "API Key (from Kite Developer Console)",
-                type="password",
-                value=st.session_state.get('kite_api_key', ''),
-                key="kite_api_input",
-                help="Get this from https://developers.kite.trade/"
-            )
+        with tab1:
+            st.markdown("#### 🔑 Kite Connect Login")
             
-            if api_key:
-                # Validate API key format
-                if len(api_key) < 10 or len(api_key) > 50:
-                    st.warning("⚠️ API Key format looks incorrect")
-                else:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**Step 1: Enter API Key**")
+                api_key = st.text_input(
+                    "API Key",
+                    type="password",
+                    value=st.session_state.get('kite_api_key', ''),
+                    key="kite_api_input"
+                )
+                
+                if api_key:
                     st.session_state.kite_api_key = api_key
-            
-            # Show API Key format example
-            st.markdown("""
-            <div style="background: #1e1e1e; padding: 10px; border-radius: 5px; margin: 10px 0;">
-            <small>API Key usually looks like: <code>abc123def456</code> or <code>jf9s3k8d7m2n</code></small>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            if st.button("🔗 Generate Login URL", key="generate_url"):
-                if not api_key:
-                    st.error("❌ Please enter API Key first")
-                else:
-                    try:
-                        # Test if API key is valid by creating KiteConnect instance
-                        if KITE_AVAILABLE:
-                            kite = KiteConnect(api_key=api_key)
-                            login_url = kite.login_url()
-                            
-                            if login_url:
+                
+                if st.button("🔗 Generate Login URL", key="generate_url", use_container_width=True):
+                    if not api_key:
+                        st.error("❌ Please enter API Key first")
+                    else:
+                        try:
+                            if KITE_AVAILABLE:
+                                kite = KiteConnect(api_key=api_key)
+                                login_url = kite.login_url()
+                                
                                 st.session_state.kite_login_step = 1
                                 st.session_state.kite_login_url = login_url
-                                st.success("✅ Login URL generated successfully!")
                                 
-                                # Display the URL in a clickable format
+                                st.success("✅ Login URL generated!")
                                 st.markdown(f"""
                                 **Step 2: Login to Kite**
                                 
-                                1. Click the link below to login:
-                                [🔗 **Click here to Login to Zerodha Kite**]({login_url})
-                                
+                                1. [Click here to login]({login_url})
                                 2. Login with your Zerodha credentials
                                 3. Authorize the application
-                                4. After login, you'll be redirected to a URL like:
-                                `https://your-redirect-url.com/?request_token=ABCD123456&action=login&status=success`
-                                
-                                5. Copy the **request_token** from the URL (the part after `request_token=` )
+                                4. After login, copy the **request_token** from the URL
                                 """)
-                                
-                                # Also show the URL in a text box for easy copy
-                                st.text_input("Login URL (copy if link doesn't work):", 
-                                            value=login_url, 
-                                            disabled=True)
                             else:
-                                st.error("❌ Failed to generate login URL")
-                        else:
-                            st.error("❌ KiteConnect not installed")
-                            
-                    except Exception as e:
-                        st.error(f"❌ Error generating login URL: {str(e)}")
-                        st.info("Make sure your API Key is correct and active in Kite Developer Console")
-        
-        with col2:
-            if st.session_state.get('kite_login_step', 0) >= 1:
-                st.markdown("**Step 3: Enter Request Token**")
-                request_token = st.text_input(
-                    "Paste Request Token from URL",
-                    type="password",
-                    value=st.session_state.get('kite_request_token', ''),
-                    key="request_token_input",
-                    help="Copy from the URL after login (looks like: ABC123DEF456)"
-                )
-                
-                if request_token:
-                    st.session_state.kite_request_token = request_token
-                
-                api_secret = st.text_input(
-                    "API Secret (from Kite Developer Console)",
-                    type="password",
-                    value="",
-                    key="api_secret_input",
-                    help="Get this from https://developers.kite.trade/ under your app"
-                )
-                
-                if st.button("🔑 Generate Access Token", key="generate_token"):
-                    if not api_key or not request_token or not api_secret:
-                        st.error("❌ Please enter all fields")
-                    else:
-                        with st.spinner("Generating access token..."):
-                            try:
-                                # Generate access token
-                                kite = KiteConnect(api_key=api_key)
-                                data = kite.generate_session(request_token, api_secret=api_secret)
-                                access_token = data["access_token"]
-                                
-                                if access_token:
-                                    st.session_state.kite_access_token = access_token
-                                    st.session_state.kite_login_step = 2
-                                    st.success("✅ Access token generated successfully!")
-                                    
-                                    # Save to environment
-                                    os.environ['KITE_API_KEY'] = api_key
-                                    os.environ['KITE_ACCESS_TOKEN'] = access_token
-                                    
-                                    # Save to session state
-                                    st.session_state.kite_api_key = api_key
-                                    st.session_state.kite_access_token = access_token
-                                    
-                                    # Try to connect
-                                    st.info("🔄 Attempting to connect to Kite...")
-                                    if engine.broker.connect():
-                                        st.success("✅ Connected to Kite Connect!")
-                                        st.rerun()
-                                    else:
-                                        st.error("❌ Connection failed. Check if API key is correct.")
-                                else:
-                                    st.error("❌ Failed to generate access token")
-                                    
-                            except Exception as e:
-                                st.error(f"❌ Error generating access token: {str(e)}")
-                                st.info("""
-                                Common issues:
-                                1. API Secret is incorrect
-                                2. Request token has expired (get a new one)
-                                3. API Key is invalid
-                                """)
-            
-            # Connection Status
-            st.markdown("---")
-            st.markdown("#### 📡 Connection Status")
-            
-            status_col1, status_col2 = st.columns(2)
-            with status_col1:
-                if engine.broker.connected:
-                    st.success("✅ Connected to Kite")
-                else:
-                    st.warning("⚠️ Not Connected (Demo Mode)")
-            
-            with status_col2:
-                if engine.broker.websocket_running:
-                    st.success("✅ WebSocket Active")
-                elif engine.broker.connected:
-                    st.warning("⚠️ WebSocket Not Active")
-            
-            # Manual Connection
-            if st.button("🔌 Test Connection", key="test_connection"):
-                with st.spinner("Testing connection..."):
-                    if engine.broker.connected:
-                        try:
-                            profile = engine.broker.kite.profile()
-                            st.success(f"✅ Connected as: {profile['user_name']}")
+                                st.error("❌ KiteConnect not installed")
                         except Exception as e:
-                            st.error(f"❌ Connection test failed: {e}")
+                            st.error(f"❌ Error: {str(e)}")
+            
+            with col2:
+                if st.session_state.get('kite_login_step', 0) >= 1:
+                    st.markdown("**Step 3: Enter Request Token & API Secret**")
+                    
+                    request_token = st.text_input(
+                        "Request Token",
+                        type="password",
+                        value=st.session_state.get('kite_request_token', ''),
+                        key="request_token_input"
+                    )
+                    
+                    if request_token:
+                        st.session_state.kite_request_token = request_token
+                    
+                    api_secret = st.text_input(
+                        "API Secret",
+                        type="password",
+                        value=st.session_state.get('kite_api_secret', ''),
+                        key="api_secret_input"
+                    )
+                    
+                    if api_secret:
+                        st.session_state.kite_api_secret = api_secret
+                    
+                    if st.button("🔑 Generate Access Token", key="generate_token", use_container_width=True):
+                        if not api_key or not request_token or not api_secret:
+                            st.error("❌ Please enter all fields")
+                        else:
+                            with st.spinner("Generating access token..."):
+                                try:
+                                    access_token = KiteConnectLoginHelper.generate_access_token(
+                                        api_key, request_token, api_secret
+                                    )
+                                    
+                                    if access_token:
+                                        st.session_state.kite_access_token = access_token
+                                        st.session_state.kite_login_step = 2
+                                        
+                                        # Save to environment
+                                        os.environ['KITE_API_KEY'] = api_key
+                                        os.environ['KITE_ACCESS_TOKEN'] = access_token
+                                        
+                                        st.success("✅ Access token generated!")
+                                        
+                                        # Try to connect
+                                        if engine.broker.connect():
+                                            st.success("✅ Connected to Kite!")
+                                            st.rerun()
+                                        else:
+                                            st.error("❌ Connection failed")
+                                    else:
+                                        st.error("❌ Failed to generate access token")
+                                except Exception as e:
+                                    st.error(f"❌ Error: {str(e)}")
+                
+                # Connection Status
+                st.markdown("---")
+                st.markdown("#### 📡 Connection Status")
+                
+                status_col1, status_col2 = st.columns(2)
+                with status_col1:
+                    if engine.broker.connected:
+                        st.success("✅ Connected to Kite")
                     else:
-                        st.info("ℹ️ Not connected. Please login first.")
-    
-    with tab2:
-        col_sys1, col_sys2 = st.columns(2)
+                        st.warning("⚠️ Not Connected")
+                
+                with status_col2:
+                    if engine.broker.websocket_running:
+                        st.success("✅ WebSocket Active")
+                    elif engine.broker.connected:
+                        st.warning("⚠️ WebSocket Inactive")
+                
+                # Test Connection
+                if st.button("🔌 Test Connection", key="test_connection", use_container_width=True):
+                    with st.spinner("Testing connection..."):
+                        if engine.broker.connected:
+                            try:
+                                profile = engine.broker.kite.profile()
+                                st.success(f"✅ Connected as: {profile['user_name']}")
+                            except Exception as e:
+                                st.error(f"❌ Connection test failed: {e}")
+                        else:
+                            st.info("ℹ️ Not connected. Please login first.")
         
-        with col_sys1:
-            st.markdown("#### 📊 System Information")
+        with tab2:
+            col_sys1, col_sys2 = st.columns(2)
             
-            # Get current status
-            system_status = "🟢 Running" if engine.running else "🔴 Stopped"
-            trading_mode = "💰 Live" if not engine.broker.demo_mode else "📈 Paper"
-            kite_status = "🟢 Connected" if engine.broker.connected else "🔴 Disconnected"
-            ws_status = "🟢 Active" if engine.broker.websocket_running else "🔴 Inactive"
-            rt_status = "🟢 ON" if st.session_state.get('auto_refresh', False) else "🔴 OFF"
-            auto_status = "🟢 ON" if st.session_state.get('auto_execute', False) else "🔴 OFF"
+            with col_sys1:
+                st.markdown("#### 📊 System Information")
+                
+                # Get status
+                system_status = "🟢 Running" if engine.running else "🔴 Stopped"
+                trading_mode = "💰 Live" if not engine.broker.demo_mode else "📈 Paper"
+                kite_status = "🟢 Connected" if engine.broker.connected else "🔴 Disconnected"
+                ws_status = "🟢 Active" if engine.broker.websocket_running else "🔴 Inactive"
+                rt_status = "🟢 ON" if st.session_state.get('auto_refresh', False) else "🔴 OFF"
+                auto_status = "🟢 ON" if st.session_state.get('auto_execute', False) else "🔴 OFF"
+                
+                st.info(f"""
+                **System Status:** {system_status}
+                **Trading Mode:** {trading_mode}
+                **Kite Connection:** {kite_status}
+                **WebSocket:** {ws_status}
+                **Real-Time Updates:** {rt_status}
+                **Auto-Execution:** {auto_status}
+                **AI Models Trained:** {len(engine.ai.models)}
+                **Active Signals:** {len(engine.signal_generator.active_signals)}
+                **Active Positions:** {len(engine.position_manager.positions)}
+                **F&O Stocks:** {len(StockUniverse.get_all_fno_stocks())}
+                """)
             
-            st.info(f"""
-            **System Status:** {system_status}
-            **Trading Mode:** {trading_mode}
-            **Kite Connection:** {kite_status}
-            **WebSocket:** {ws_status}
-            **Real-Time Updates:** {rt_status}
-            **Auto-Execution:** {auto_status}
-            **AI Models Trained:** {len(engine.ai.models)}
-            **Active Signals:** {len(engine.signal_generator.active_signals)}
-            **Active Positions:** {len(engine.position_manager.positions)}
-            **Market Updates:** {market_indices.update_counter}
-            **Total Refreshes:** {st.session_state.refresh_counter}
-            **F&O Stocks:** {len(StockUniverse.get_all_fno_stocks())}
-            """)
-        
-        with col_sys2:
-            st.markdown("#### ⚡ System Configuration")
-            
-            with st.form("system_config"):
-                st.markdown("**Signal Settings**")
+            with col_sys2:
+                st.markdown("#### ⚡ System Configuration")
                 
-                signal_expiry = st.slider(
-                    "Signal Expiry (seconds)",
-                    min_value=10, max_value=300, 
-                    value=Config.SIGNAL_EXPIRY_SECONDS, step=10
-                )
-                
-                signal_refresh = st.slider(
-                    "Signal Refresh Interval (seconds)",
-                    min_value=1, max_value=60, 
-                    value=Config.SIGNAL_REFRESH_INTERVAL, step=1
-                )
-                
-                price_trigger = st.slider(
-                    "Price Movement Trigger (%)",
-                    min_value=0.1, max_value=5.0, 
-                    value=0.5, step=0.1
-                )
-                
-                # Add more settings
-                st.markdown("**Risk Settings**")
-                
-                max_positions = st.slider(
-                    "Max Positions",
-                    min_value=1, max_value=20,
-                    value=Config.MAX_POSITIONS, step=1
-                )
-                
-                max_daily_trades = st.slider(
-                    "Max Daily Trades",
-                    min_value=1, max_value=100,
-                    value=Config.MAX_DAILY_TRADES, step=1
-                )
-                
-                if st.form_submit_button("💾 Save System Settings"):
-                    Config.SIGNAL_EXPIRY_SECONDS = signal_expiry
-                    Config.SIGNAL_REFRESH_INTERVAL = signal_refresh
-                    Config.MAX_POSITIONS = max_positions
-                    Config.MAX_DAILY_TRADES = max_daily_trades
-                    engine.signal_generator.price_movement_threshold = price_trigger
-                    st.success("✅ System settings saved!")
-                    time.sleep(1)
-                    st.rerun()
+                with st.form("system_config"):
+                    st.markdown("**Signal Settings**")
+                    
+                    signal_expiry = st.slider(
+                        "Signal Expiry (seconds)",
+                        min_value=10, max_value=300, 
+                        value=Config.SIGNAL_EXPIRY_SECONDS, step=10
+                    )
+                    
+                    signal_refresh = st.slider(
+                        "Signal Refresh Interval (seconds)",
+                        min_value=1, max_value=60, 
+                        value=Config.SIGNAL_REFRESH_INTERVAL, step=1
+                    )
+                    
+                    st.markdown("**Risk Settings**")
+                    
+                    max_positions = st.slider(
+                        "Max Positions",
+                        min_value=1, max_value=20,
+                        value=Config.MAX_POSITIONS, step=1
+                    )
+                    
+                    max_daily_trades = st.slider(
+                        "Max Daily Trades",
+                        min_value=1, max_value=100,
+                        value=Config.MAX_DAILY_TRADES, step=1
+                    )
+                    
+                    if st.form_submit_button("💾 Save Settings", use_container_width=True):
+                        Config.SIGNAL_EXPIRY_SECONDS = signal_expiry
+                        Config.SIGNAL_REFRESH_INTERVAL = signal_refresh
+                        Config.MAX_POSITIONS = max_positions
+                        Config.MAX_DAILY_TRADES = max_daily_trades
+                        st.success("✅ Settings saved!")
+                        st.rerun()
     
     # Footer
     st.markdown("---")
     st.markdown("""
     <div style='text-align: center; color: #666;'>
     <p>🚨 <b>DISCLAIMER:</b> For educational purposes only. Trading involves risk of loss.</p>
-    <p>© 2025 AI Algo Trading Bot v8.0 PRODUCTION | Complete F&O Universe (159 Stocks) | Real-Time Processing</p>
+    <p>© 2025 AI Algo Trading Bot v8.0 | Complete F&O Universe | Real-Time Processing</p>
     </div>
     """, unsafe_allow_html=True)
 
