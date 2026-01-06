@@ -2872,87 +2872,76 @@ def main():
         tab1, tab2 = st.tabs(["🔑 Kite Connect", "⚡ System Settings"])
         
         with tab1:
-            st.markdown("#### 🔑 Kite Connect Login")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("**Step 1: Enter API Key**")
-                api_key = st.text_input(
-                    "API Key (from Kite Developer Console)",
-                    type="password",
-                    value=st.session_state.get('kite_api_key', ''),
-                    key="kite_api_input"
-                )
-                if api_key:
-                    st.session_state.kite_api_key = api_key
-                
-                if st.button("🔗 Generate Login URL", key="generate_url"):
-                    if not api_key:
-                        st.error("Please enter API Key first")
-                    else:
-                        login_url = KiteConnectLoginHelper.get_login_url(api_key)
+    st.markdown("#### 🔑 Kite Connect Login")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**Step 1: Enter API Key**")
+        api_key = st.text_input(
+            "API Key (from Kite Developer Console)",
+            type="password",
+            value=st.session_state.get('kite_api_key', ''),
+            key="kite_api_input",
+            help="Get this from https://developers.kite.trade/"
+        )
+        
+        if api_key:
+            # Validate API key format
+            if len(api_key) < 10 or len(api_key) > 50:
+                st.warning("⚠️ API Key format looks incorrect")
+            else:
+                st.session_state.kite_api_key = api_key
+        
+        # Show API Key format example
+        st.markdown("""
+        <div style="background: #1e1e1e; padding: 10px; border-radius: 5px; margin: 10px 0;">
+        <small>API Key usually looks like: <code>abc123def456</code> or <code>jf9s3k8d7m2n</code></small>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if st.button("🔗 Generate Login URL", key="generate_url"):
+            if not api_key:
+                st.error("❌ Please enter API Key first")
+            else:
+                try:
+                    # Test if API key is valid by creating KiteConnect instance
+                    if KITE_AVAILABLE:
+                        kite = KiteConnect(api_key=api_key)
+                        login_url = kite.login_url()
+                        
                         if login_url:
                             st.session_state.kite_login_step = 1
                             st.session_state.kite_login_url = login_url
-                            st.success("✅ Login URL generated!")
+                            st.success("✅ Login URL generated successfully!")
                             
+                            # Display the URL in a clickable format
                             st.markdown(f"""
                             **Step 2: Login to Kite**
                             
-                            1. Click the link below to login
-                            2. Authorize the app
-                            3. After login, you'll be redirected to a URL
-                            4. Copy the **request_token** from the URL
+                            1. Click the link below to login:
+                            [🔗 **Click here to Login to Zerodha Kite**]({login_url})
                             
-                            [🔗 Login to Zerodha Kite]({login_url})
+                            2. Login with your Zerodha credentials
+                            3. Authorize the application
+                            4. After login, you'll be redirected to a URL like:
+                            `https://your-redirect-url.com/?request_token=ABCD123456&action=login&status=success`
+                            
+                            5. Copy the **request_token** from the URL (the part after `request_token=` )
                             """)
-            
-            with col2:
-                if st.session_state.get('kite_login_step', 0) >= 1:
-                    st.markdown("**Step 3: Enter Request Token**")
-                    request_token = st.text_input(
-                        "Paste Request Token from URL",
-                        type="password",
-                        value=st.session_state.get('kite_request_token', ''),
-                        key="request_token_input"
-                    )
-                    
-                    if request_token:
-                        st.session_state.kite_request_token = request_token
-                    
-                    api_secret = st.text_input(
-                        "API Secret (from Kite Developer Console)",
-                        type="password",
-                        value="",
-                        key="api_secret_input"
-                    )
-                    
-                    if st.button("🔑 Generate Access Token", key="generate_token"):
-                        if not api_key or not request_token or not api_secret:
-                            st.error("Please enter all fields")
+                            
+                            # Also show the URL in a text box for easy copy
+                            st.text_input("Login URL (copy if link doesn't work):", 
+                                        value=login_url, 
+                                        disabled=True)
                         else:
-                            with st.spinner("Generating access token..."):
-                                access_token = KiteConnectLoginHelper.generate_access_token(
-                                    api_key, request_token, api_secret
-                                )
-                                
-                                if access_token:
-                                    st.session_state.kite_access_token = access_token
-                                    st.session_state.kite_login_step = 2
-                                    st.success("✅ Access token generated!")
-                                    
-                                    # Save to environment
-                                    os.environ['KITE_API_KEY'] = api_key
-                                    os.environ['KITE_ACCESS_TOKEN'] = access_token
-                                    
-                                    # Try to connect
-                                    if engine.broker.connect():
-                                        st.success("✅ Connected to Kite Connect!")
-                                    else:
-                                        st.error("❌ Connection failed")
-                                else:
-                                    st.error("❌ Failed to generate access token")
+                            st.error("❌ Failed to generate login URL")
+                    else:
+                        st.error("❌ KiteConnect not installed")
+                        
+                except Exception as e:
+                    st.error(f"❌ Error generating login URL: {str(e)}")
+                    st.info("Make sure your API Key is correct and active in Kite Developer Console")
             
             # Connection Status
             st.markdown("---")
