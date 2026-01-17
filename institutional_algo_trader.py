@@ -79,7 +79,7 @@ warnings.filterwarnings('ignore')
 class Config:
     """Trading bot configuration - Production ready"""
     # Capital Management
-    TOTAL_CAPITAL = 2_000_000
+    TOTAL_CAPITAL = 1_000_000
     RISK_PER_TRADE = 0.01  # 1% risk per trade
     MAX_DAILY_LOSS = 0.02  # 2% daily loss limit
     MAX_DRAWDOWN = 0.05    # 5% maximum drawdown
