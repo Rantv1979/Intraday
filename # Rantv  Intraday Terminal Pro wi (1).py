@@ -3031,18 +3031,18 @@ def initialize_application():
 if __name__ == "__main__":
     try:
         # Initialize the application
-       data_manager, trader = initialize_application()
-    
-if data_manager is None or trader is None:
-        st.error("Failed to initialize application. Please refresh the page.")
-        st.stop()
-    
-    # Auto-refresh
-    st_autorefresh(interval=PRICE_REFRESH_MS, key="price_refresh_improved")
+        data_manager, trader = initialize_application()
 
-    # Enhanced UI with Circular Market Mood Gauges
-    st.markdown("<h1 style='text-align:center; color: #1e3a8a;'>Rantv Intraday Terminal Pro - ENHANCED</h1>", unsafe_allow_html=True)
-    st.markdown("<h4 style='text-align:center; color: #6b7280;'>Full Stock Scanning & High-Quality Signal Generation Enabled</h4>", unsafe_allow_html=True)
+        if data_manager is None or trader is None:
+            st.error("Failed to initialize application. Please refresh the page.")
+            st.stop()
+
+        # Auto-refresh
+        st_autorefresh(interval=PRICE_REFRESH_MS, key="price_refresh_improved")
+
+        # Enhanced UI with Circular Market Mood Gauges
+        st.markdown("<h1 style='text-align:center; color: #1e3a8a;'>Rantv Intraday Terminal Pro - ENHANCED</h1>", unsafe_allow_html=True)
+        st.markdown("<h4 style='text-align:center; color: #6b7280;'>Full Stock Scanning & High-Quality Signal Generation Enabled</h4>", unsafe_allow_html=True)
 
         # Market overview with enhanced metrics
         cols = st.columns(7)
@@ -3405,7 +3405,8 @@ if data_manager is None or trader is None:
             "🔍 Backtest", 
             "⚡ Strategies",
             "🎯 High Accuracy Scanner",
-            "📊 Kite Live Charts"  # NEW TAB: Kite Live Charts
+            "📊 Kite Live Charts",  # NEW TAB: Kite Live Charts
+            "🩻 Footprint & Profile"  # NEW TAB: Market Footprint & Volume Profile
         ])
     
         # Tab 1: Dashboard
@@ -3754,8 +3755,8 @@ if data_manager is None or trader is None:
                     else:
                         st.error(f"❌ {msg}")
                         
-        except Exception as e:
-            st.error(f"Trade execution failed: {str(e)}")
+                except Exception as e:
+                    st.error(f"Trade execution failed: {str(e)}")
             
             # Show current positions
             st.subheader("Current Positions")
@@ -3888,8 +3889,8 @@ if data_manager is None or trader is None:
                         else:
                             st.info("No extreme RSI stocks found")
                             
-    except Exception as e:
-        st.error(f"Error scanning RSI extremes: {str(e)}")
+                    except Exception as e:
+                        st.error(f"Error scanning RSI extremes: {str(e)}")
     
         # Tab 6: Backtest
         with tabs[5]:
@@ -4044,11 +4045,11 @@ if data_manager is None or trader is None:
             # Check Kite authentication status
             if not KITECONNECT_AVAILABLE:
                 st.error("❌ Kite Connect library not available. Please install: pip install kiteconnect")
-                return
+                st.stop()
             
             if not data_manager.kite_manager.is_authenticated:
                 st.warning("⚠️ Kite Connect not authenticated. Please authenticate in the sidebar.")
-                return
+                st.stop()
             
             # Simple chart interface
             st.info("🎯 Kite Connect Live Charts - Real-time NSE data")
@@ -4137,9 +4138,128 @@ if data_manager is None or trader is None:
                     else:
                         st.error("Invalid index selection")
                         
+                except Exception as e:
+                    st.error(f"Error loading chart: {str(e)}")
+                    st.info("Note: Kite Connect requires proper authentication and API permissions.")
+
+        # Tab 10: Market Footprint & Volume Profile
+        with tabs[9]:
+            st.subheader("🩻 Market Footprint & Volume Profile")
+            st.caption("Volume Profile shows where the most volume traded by price. "
+                       "Footprint is an OHLCV-based buy/sell pressure proxy (no tick-level bid/ask data is available from this data source).")
+
+            fp_col1, fp_col2, fp_col3 = st.columns(3)
+            with fp_col1:
+                fp_symbol = st.selectbox("Symbol", NIFTY_50[:30], key="fp_symbol_select")
+            with fp_col2:
+                fp_interval = st.selectbox("Interval", ["5m", "15m", "1m"], index=1, key="fp_interval_select")
+            with fp_col3:
+                fp_bins = st.slider("Profile Bins", 10, 50, 24, key="fp_bins_slider")
+
+            try:
+                fp_data = data_manager.get_stock_data(fp_symbol, fp_interval)
+
+                if fp_data is not None and len(fp_data) > 0:
+                    profile = calculate_market_profile_vectorized(
+                        fp_data["High"], fp_data["Low"], fp_data["Close"], fp_data["Volume"], bins=fp_bins
+                    )
+                    current_price = float(fp_data["Close"].iloc[-1])
+
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Current Price", f"₹{current_price:,.2f}")
+                    m2.metric("POC (Point of Control)", f"₹{profile['poc']:,.2f}")
+                    m3.metric("Value Area High", f"₹{profile['value_area_high']:,.2f}")
+                    m4.metric("Value Area Low", f"₹{profile['value_area_low']:,.2f}")
+
+                    if profile['value_area_low'] <= current_price <= profile['value_area_high']:
+                        st.success("📍 Price is trading INSIDE the Value Area (balanced / fair value)")
+                    elif current_price > profile['value_area_high']:
+                        st.info("⬆️ Price is trading ABOVE the Value Area (potential premium / trend up)")
+                    else:
+                        st.info("⬇️ Price is trading BELOW the Value Area (potential discount / trend down)")
+
+                    # Volume Profile chart (horizontal bars) alongside price
+                    vp_fig = make_subplots(
+                        rows=1, cols=2, column_widths=[0.72, 0.28], shared_yaxes=True,
+                        horizontal_spacing=0.02,
+                        subplot_titles=("Price", "Volume Profile")
+                    )
+                    vp_fig.add_trace(go.Candlestick(
+                        x=fp_data.index, open=fp_data["Open"], high=fp_data["High"],
+                        low=fp_data["Low"], close=fp_data["Close"], name="Price"
+                    ), row=1, col=1)
+
+                    prices = [p["price"] for p in profile["profile"]]
+                    vols = [p["volume"] for p in profile["profile"]]
+                    poc_idx = int(np.argmax(vols)) if vols else 0
+                    bar_colors = ["#f59e0b" if i == poc_idx else "#3b82f6" for i in range(len(vols))]
+                    vp_fig.add_trace(go.Bar(
+                        x=vols, y=prices, orientation="h", name="Volume",
+                        marker=dict(color=bar_colors), showlegend=False
+                    ), row=1, col=2)
+
+                    for label, level, dash in [
+                        ("POC", profile["poc"], "solid"),
+                        ("VAH", profile["value_area_high"], "dash"),
+                        ("VAL", profile["value_area_low"], "dash"),
+                    ]:
+                        vp_fig.add_hline(y=level, line_dash=dash, line_color="#f59e0b" if label == "POC" else "#9ca3af",
+                                         annotation_text=label, row=1, col=1)
+
+                    vp_fig.update_layout(
+                        height=550, template="plotly_dark", showlegend=False,
+                        xaxis_rangeslider_visible=False,
+                        title=f"{fp_symbol} — Volume Profile ({fp_interval})"
+                    )
+                    st.plotly_chart(vp_fig, use_container_width=True)
+
+                    st.divider()
+
+                    # Simplified Footprint (buy/sell pressure proxy per candle)
+                    st.subheader("📟 Candle Footprint (Buy/Sell Pressure Proxy)")
+                    fp_n = st.slider("Number of recent candles", 10, 50, 20, key="fp_candle_count")
+                    recent = fp_data.tail(fp_n).copy()
+                    rng = (recent["High"] - recent["Low"]).replace(0, np.nan)
+                    buy_ratio = ((recent["Close"] - recent["Low"]) / rng).fillna(0.5).clip(0, 1)
+                    recent["Est_Buy_Vol"] = (recent["Volume"] * buy_ratio).round(0)
+                    recent["Est_Sell_Vol"] = (recent["Volume"] * (1 - buy_ratio)).round(0)
+                    recent["Delta"] = recent["Est_Buy_Vol"] - recent["Est_Sell_Vol"]
+
+                    delta_colors = ["#059669" if d >= 0 else "#dc2626" for d in recent["Delta"]]
+                    delta_fig = go.Figure(go.Bar(
+                        x=recent.index, y=recent["Delta"], marker=dict(color=delta_colors), name="Delta"
+                    ))
+                    delta_fig.update_layout(
+                        height=280, template="plotly_dark",
+                        title="Estimated Buy/Sell Delta per Candle (green = buy pressure, red = sell pressure)"
+                    )
+                    st.plotly_chart(delta_fig, use_container_width=True)
+
+                    footprint_display = recent[["Open", "High", "Low", "Close", "Volume", "Est_Buy_Vol", "Est_Sell_Vol", "Delta"]].copy()
+                    footprint_display.index.name = "Time"
+                    st.dataframe(
+                        footprint_display.style.format({
+                            "Open": "{:.2f}", "High": "{:.2f}", "Low": "{:.2f}", "Close": "{:.2f}",
+                            "Volume": "{:,.0f}", "Est_Buy_Vol": "{:,.0f}", "Est_Sell_Vol": "{:,.0f}", "Delta": "{:+,.0f}"
+                        }).background_gradient(subset=["Delta"], cmap="RdYlGn"),
+                        width='stretch'
+                    )
+
+                    cum_delta = float(recent["Delta"].sum())
+                    st.metric("Cumulative Delta (session window)", f"{cum_delta:+,.0f}",
+                              delta="Net Buying" if cum_delta >= 0 else "Net Selling")
+
+                    st.caption("⚠️ This footprint is a volume-weighted proxy derived from OHLCV bars (close position within each bar's range), "
+                               "not true bid/ask executed-order footprint data. For genuine tick-by-tick footprint charts, a Level 2 / "
+                               "tick data feed (e.g. via a broker API) would be required.")
+                else:
+                    st.error("Could not fetch data for footprint/profile analysis.")
+            except Exception as e:
+                st.error(f"Error building footprint/profile: {str(e)}")
+
     except Exception as e:
-        st.error(f"Error loading chart: {str(e)}")
-        st.info("Note: Kite Connect requires proper authentication and API permissions.")
+        st.error(f"Application error: {str(e)}")
+        st.code(traceback.format_exc())
        
     
     
