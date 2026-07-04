@@ -1519,6 +1519,181 @@ def create_circular_market_mood_gauge(index_name, current_value, change_percent,
     """
     return gauge_html
 
+# ============================================================
+# "How To Analyze Stocks" — 16-Point Fundamental Checklist
+# (Study Point framework) + data-backed helper
+# ============================================================
+STOCK_ANALYZE_FRAMEWORK = [
+    {"num": 1, "title": "Industry", "icon": "🏭",
+     "questions": ["Is the industry attractive?", "Is the market growing?", "Is the industry highly competitive?"]},
+    {"num": 2, "title": "Business Model", "icon": "⚙️",
+     "questions": ["How does the company make money?", "Does the business interest me?", "Is there recurring revenue?"]},
+    {"num": 3, "title": "Historical Growth", "icon": "📈",
+     "questions": ["How fast is revenue growing?", "How fast are earnings growing?", "What is the source of growth?"]},
+    {"num": 4, "title": "Historical Value Creation", "icon": "💎",
+     "questions": ["Has it created shareholder value?", "What are the returns since IPO?", "Is it returning capital to shareholders?"]},
+    {"num": 5, "title": "Moat", "icon": "🏰",
+     "questions": ["What differentiates the company?", "What is the source of moat?", "Does the company have pricing power?"]},
+    {"num": 6, "title": "Capital Intensity", "icon": "🏗️",
+     "questions": ["How much capital is needed to operate?", "Is the company investing heavily?", "Are capital expenditures high or low?"]},
+    {"num": 7, "title": "Profitability", "icon": "⚖️",
+     "questions": ["Is the company producing earnings?", "Is the company producing free cash flow?", "Are the margins high & stable?"]},
+    {"num": 8, "title": "Balance Sheet", "icon": "📊",
+     "questions": ["Is the balance sheet strong?", "Does the company have a lot of debt?", "Does the company have a lot of goodwill?"]},
+    {"num": 9, "title": "Capital Return", "icon": "💰",
+     "questions": ["Does the company pay a dividend?", "Did the company buy back stock?", "Is the capital return program creating value?"]},
+    {"num": 10, "title": "Management", "icon": "👥",
+     "questions": ["Does management own stock? How much?", "Do they consider all stakeholders?", "Does management have skin in the game?"]},
+    {"num": 11, "title": "Capital Allocation", "icon": "🏛️",
+     "questions": ["What are the returns on capital?", "Do they exceed cost of capital?", "Are returns on capital stable?"]},
+    {"num": 12, "title": "Stock-Based Compensation", "icon": "🧾",
+     "questions": ["What is the SBC policy?", "What is the dilution rate?", "What metrics trigger SBC payments?"]},
+    {"num": 13, "title": "Outlook", "icon": "🔭",
+     "questions": ["Does the company issue guidance?", "What is the projected growth rate?", "Is the growth rate achievable?"]},
+    {"num": 14, "title": "Optionality", "icon": "🔀",
+     "questions": ["Does the company create new products?", "Does the pipeline look strong?", "Have new products increased sales?"]},
+    {"num": 15, "title": "Risks", "icon": "⚠️",
+     "questions": ["What are the main risks for the company?", "Are there concentration issues?", "Is it dependent on market prices?"]},
+    {"num": 16, "title": "Valuation", "icon": "🔍",
+     "questions": ["Which valuation method is most useful?", "What price would you currently pay?", "Is the company undervalued or overvalued?"]},
+]
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_fundamental_analysis(symbol):
+    """
+    Pulls fundamental data via yfinance and maps it onto the 16-point
+    'How To Analyze Stocks' checklist. Every metric is wrapped defensively
+    since NSE fundamental coverage on yfinance is inconsistent stock-to-stock.
+    Purely qualitative items (moat, management character, optionality, etc.)
+    are returned as guiding questions since they require human judgment.
+    """
+    result = {"symbol": symbol, "ok": False, "sections": {}, "error": None}
+    try:
+        tk = yf.Ticker(symbol)
+        info = tk.info or {}
+
+        def g(key, default=None):
+            v = info.get(key, default)
+            return v if v is not None else default
+
+        # Multi-year financials for growth trend
+        rev_cagr = None
+        earn_cagr = None
+        try:
+            fin = tk.financials
+            if fin is not None and not fin.empty:
+                if "Total Revenue" in fin.index:
+                    rev = fin.loc["Total Revenue"].dropna().sort_index()
+                    if len(rev) >= 2 and rev.iloc[0] > 0:
+                        years = len(rev) - 1
+                        rev_cagr = ((rev.iloc[-1] / rev.iloc[0]) ** (1 / years) - 1) * 100
+                if "Net Income" in fin.index:
+                    ni = fin.loc["Net Income"].dropna().sort_index()
+                    if len(ni) >= 2 and ni.iloc[0] > 0:
+                        years = len(ni) - 1
+                        earn_cagr = ((ni.iloc[-1] / ni.iloc[0]) ** (1 / years) - 1) * 100
+        except Exception:
+            pass
+
+        # Capex / revenue (capital intensity)
+        capex_ratio = None
+        try:
+            cf = tk.cashflow
+            if cf is not None and not cf.empty and "Capital Expenditure" in cf.index:
+                capex = abs(cf.loc["Capital Expenditure"].dropna().iloc[0])
+                total_rev = g("totalRevenue")
+                if total_rev:
+                    capex_ratio = (capex / total_rev) * 100
+        except Exception:
+            pass
+
+        # 5y price return + dividend income
+        five_yr_return = None
+        div_total_5y = None
+        try:
+            hist = tk.history(period="5y")
+            if hist is not None and len(hist) > 2:
+                five_yr_return = (hist["Close"].iloc[-1] / hist["Close"].iloc[0] - 1) * 100
+            divs = tk.dividends
+            if divs is not None and len(divs) > 0:
+                cutoff = pd.Timestamp.now(tz=divs.index.tz) - pd.DateOffset(years=5)
+                div_total_5y = float(divs[divs.index >= cutoff].sum())
+        except Exception:
+            pass
+
+        current_price = g("currentPrice") or g("regularMarketPrice")
+
+        result["sections"] = {
+            1: {"metrics": [("Sector", g("sector", "N/A")), ("Industry", g("industry", "N/A"))]},
+            2: {"metrics": [("Business Summary", g("longBusinessSummary", "N/A"))]},
+            3: {"metrics": [
+                ("Revenue Growth (YoY)", f"{g('revenueGrowth', 0) * 100:.1f}%" if g("revenueGrowth") is not None else "N/A"),
+                ("Earnings Growth (YoY)", f"{g('earningsGrowth', 0) * 100:.1f}%" if g("earningsGrowth") is not None else "N/A"),
+                ("Revenue CAGR (multi-yr)", f"{rev_cagr:.1f}%" if rev_cagr is not None else "N/A"),
+                ("Net Income CAGR (multi-yr)", f"{earn_cagr:.1f}%" if earn_cagr is not None else "N/A"),
+            ]},
+            4: {"metrics": [
+                ("5-Year Price Return", f"{five_yr_return:+.1f}%" if five_yr_return is not None else "N/A"),
+                ("Dividends Paid (5y, per share)", f"₹{div_total_5y:.2f}" if div_total_5y is not None else "N/A"),
+            ]},
+            5: {"metrics": [
+                ("Gross Margin", f"{g('grossMargins', 0) * 100:.1f}%" if g("grossMargins") is not None else "N/A"),
+                ("Operating Margin", f"{g('operatingMargins', 0) * 100:.1f}%" if g("operatingMargins") is not None else "N/A"),
+            ]},
+            6: {"metrics": [
+                ("Capex / Revenue", f"{capex_ratio:.1f}%" if capex_ratio is not None else "N/A"),
+            ]},
+            7: {"metrics": [
+                ("Net Profit Margin", f"{g('profitMargins', 0) * 100:.1f}%" if g("profitMargins") is not None else "N/A"),
+                ("Operating Margin", f"{g('operatingMargins', 0) * 100:.1f}%" if g("operatingMargins") is not None else "N/A"),
+                ("Free Cash Flow", f"₹{g('freeCashflow')/1e7:,.1f} Cr" if g("freeCashflow") else "N/A"),
+            ]},
+            8: {"metrics": [
+                ("Debt / Equity", f"{g('debtToEquity', 0):.1f}" if g("debtToEquity") is not None else "N/A"),
+                ("Current Ratio", f"{g('currentRatio', 0):.2f}" if g("currentRatio") is not None else "N/A"),
+                ("Total Debt", f"₹{g('totalDebt')/1e7:,.0f} Cr" if g("totalDebt") else "N/A"),
+                ("Total Cash", f"₹{g('totalCash')/1e7:,.0f} Cr" if g("totalCash") else "N/A"),
+            ]},
+            9: {"metrics": [
+                ("Dividend Yield", f"{g('dividendYield', 0):.2f}%" if g("dividendYield") is not None else "N/A"),
+                ("Payout Ratio", f"{g('payoutRatio', 0) * 100:.1f}%" if g("payoutRatio") is not None else "N/A"),
+            ]},
+            10: {"metrics": [
+                ("Insider Ownership", f"{g('heldPercentInsiders', 0) * 100:.2f}%" if g("heldPercentInsiders") is not None else "N/A"),
+                ("Institutional Ownership", f"{g('heldPercentInstitutions', 0) * 100:.2f}%" if g("heldPercentInstitutions") is not None else "N/A"),
+            ]},
+            11: {"metrics": [
+                ("Return on Equity (ROE)", f"{g('returnOnEquity', 0) * 100:.1f}%" if g("returnOnEquity") is not None else "N/A"),
+                ("Return on Assets (ROA)", f"{g('returnOnAssets', 0) * 100:.1f}%" if g("returnOnAssets") is not None else "N/A"),
+            ]},
+            12: {"metrics": [("Note", "Stock-based compensation detail is not reliably exposed via this data source for NSE-listed companies.")]},
+            13: {"metrics": [
+                ("Analyst Target (Mean)", f"₹{g('targetMeanPrice'):.2f}" if g("targetMeanPrice") else "N/A"),
+                ("Analyst Target (High/Low)", f"₹{g('targetHighPrice'):.2f} / ₹{g('targetLowPrice'):.2f}" if g("targetHighPrice") and g("targetLowPrice") else "N/A"),
+                ("Recommendation", str(g("recommendationKey", "N/A")).upper()),
+                ("# Analyst Opinions", g("numberOfAnalystOpinions", "N/A")),
+            ]},
+            14: {"metrics": [("Note", "Product pipeline / optionality requires qualitative research beyond market data.")]},
+            15: {"metrics": [
+                ("Beta", f"{g('beta', 0):.2f}" if g("beta") is not None else "N/A"),
+                ("52-Week Range", f"₹{g('fiftyTwoWeekLow', 0):.2f} - ₹{g('fiftyTwoWeekHigh', 0):.2f}" if g("fiftyTwoWeekLow") else "N/A"),
+                ("Institutional Concentration", f"{g('heldPercentInstitutions', 0) * 100:.1f}%" if g("heldPercentInstitutions") is not None else "N/A"),
+            ]},
+            16: {"metrics": [
+                ("Current Price", f"₹{current_price:.2f}" if current_price else "N/A"),
+                ("Trailing P/E", f"{g('trailingPE', 0):.1f}" if g("trailingPE") is not None else "N/A"),
+                ("Forward P/E", f"{g('forwardPE', 0):.1f}" if g("forwardPE") is not None else "N/A"),
+                ("Price / Book", f"{g('priceToBook', 0):.2f}" if g("priceToBook") is not None else "N/A"),
+                ("EV / EBITDA", f"{g('enterpriseToEbitda', 0):.1f}" if g("enterpriseToEbitda") is not None else "N/A"),
+                ("PEG Ratio", f"{g('pegRatio', 0):.2f}" if g("pegRatio") is not None else "N/A"),
+            ]},
+        }
+        result["ok"] = True
+    except Exception as e:
+        result["error"] = str(e)
+    return result
+
 # Enhanced Data Manager with NEW integrated systems
 class EnhancedDataManager:
     def __init__(self):
@@ -3421,7 +3596,8 @@ if __name__ == "__main__":
             "⚡ Strategies",
             "🎯 High Accuracy Scanner",
             "📊 Kite Live Charts",  # NEW TAB: Kite Live Charts
-            "🩻 Footprint & Profile"  # NEW TAB: Market Footprint & Volume Profile
+            "🩻 Footprint & Profile",  # NEW TAB: Market Footprint & Volume Profile
+            "🔍 Stock Analyze"  # NEW TAB: 16-Point Fundamental Checklist
         ])
     
         # Tab 1: Dashboard
@@ -4271,6 +4447,48 @@ if __name__ == "__main__":
                     st.error("Could not fetch data for footprint/profile analysis.")
             except Exception as e:
                 st.error(f"Error building footprint/profile: {str(e)}")
+
+        # Tab 11: Stock Analyze (16-Point Fundamental Checklist)
+        with tabs[10]:
+            st.subheader("🔍 How To Analyze Stocks — 16-Point Checklist")
+            st.caption("Fundamental research framework. Metrics are pulled live where available; "
+                       "purely qualitative items are shown as guiding questions for your own judgment.")
+
+            sa_symbol = st.selectbox("Symbol", NIFTY_50, key="sa_symbol_select")
+
+            with st.spinner(f"Pulling fundamentals for {sa_symbol}..."):
+                sa_result = get_fundamental_analysis(sa_symbol)
+
+            if not sa_result["ok"]:
+                st.error(f"Could not fetch fundamental data: {sa_result.get('error', 'unknown error')}")
+            else:
+                sections = sa_result["sections"]
+                left_items = [f for f in STOCK_ANALYZE_FRAMEWORK if f["num"] % 2 == 1]
+                right_items = [f for f in STOCK_ANALYZE_FRAMEWORK if f["num"] % 2 == 0]
+                col_left, col_right = st.columns(2)
+
+                def render_section(container, item):
+                    sec = sections.get(item["num"], {"metrics": []})
+                    with container.expander(f"{item['icon']} {item['num']}. {item['title']}", expanded=False):
+                        for label, value in sec["metrics"]:
+                            if label in ("Business Summary", "Note"):
+                                st.write(f"**{label}:** {value}")
+                            else:
+                                st.markdown(f"**{label}:** {value}")
+                        st.markdown("---")
+                        st.caption("Guiding questions:")
+                        for q in item["questions"]:
+                            st.markdown(f"- {q}")
+
+                for item in left_items:
+                    render_section(col_left, item)
+                for item in right_items:
+                    render_section(col_right, item)
+
+                st.divider()
+                st.caption("⚠️ Data sourced via Yahoo Finance; coverage for NSE-listed companies (especially SBC, buyback history, "
+                           "and management detail) is often incomplete. Use this as a starting checklist, not a substitute for reading "
+                           "the annual report / investor presentation.")
 
     except Exception as e:
         st.error(f"Application error: {str(e)}")
