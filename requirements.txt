@@ -1,0 +1,11 @@
+streamlit>=1.38
+pandas
+numpy
+pytz
+yfinance
+plotly
+streamlit-autorefresh
+kiteconnect
+sqlalchemy
+joblib
+requests
