@@ -7,11 +7,28 @@ import time
 from datetime import datetime, time as dt_time
 import numpy as np
 import pandas as pd
-import pytz
+import subprocess
+import sys
+
+# Auto-install core third-party dependencies if missing (belt-and-suspenders
+# alongside requirements.txt, in case the deployed env's requirements.txt is
+# stale or incomplete)
+def _ensure_package(import_name, pip_name=None):
+    pip_name = pip_name or import_name
+    try:
+        return __import__(import_name)
+    except ImportError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", pip_name])
+        return __import__(import_name)
+
+pytz = _ensure_package("pytz")
+yf = _ensure_package("yfinance")
+_ensure_package("plotly")
+
 import streamlit as st
-import yfinance as yf
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
+_ensure_package("streamlit_autorefresh", "streamlit-autorefresh")
 from streamlit_autorefresh import st_autorefresh
 import math
 import warnings
@@ -21,8 +38,6 @@ from typing import Optional, Dict, List
 import requests
 import json
 import traceback
-import subprocess
-import sys
 from datetime import timedelta
 import threading
 
