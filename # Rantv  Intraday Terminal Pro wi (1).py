@@ -3344,9 +3344,20 @@ if __name__ == "__main__":
             data = yf_download_robust(index_symbol, period="1d", interval="5m", auto_adjust=False)
             if data is None or data.empty or len(data) < 2:
                 return None
+            if isinstance(data.columns, pd.MultiIndex):
+                if index_symbol in data.columns.get_level_values(-1):
+                    close = data.xs(index_symbol, axis=1, level=-1)["Close"]
+                else:
+                    data.columns = ["_".join(map(str, col)).strip() for col in data.columns.values]
+                    close_col = next((c for c in data.columns if c.startswith("Close")), None)
+                    close = data[close_col] if close_col else None
+            else:
+                close = data["Close"]
+            if close is None or len(close) < 2:
+                return None
             return {
-                "current": float(data["Close"].iloc[-1]),
-                "prev": float(data["Close"].iloc[-2]),
+                "current": float(close.iloc[-1]),
+                "prev": float(close.iloc[-2]),
             }
 
         mood_data_is_live = True
