@@ -41,6 +41,63 @@ import traceback
 from datetime import timedelta
 import threading
 
+# ------------------------------------------------------------------
+# Robust Yahoo Finance access layer.
+# Yahoo Finance frequently blocks / rate-limits requests coming from
+# shared cloud-provider IP ranges (Streamlit Community Cloud runs on
+# AWS/GCP), which silently breaks yfinance and makes every tab fall
+# back to demo/placeholder data. Impersonating a real browser via
+# curl_cffi and adding light retries meaningfully reduces this.
+# ------------------------------------------------------------------
+try:
+    from curl_cffi import requests as _cffi_requests
+    _YF_SESSION = _cffi_requests.Session(impersonate="chrome124")
+except Exception:
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "curl_cffi"])
+        from curl_cffi import requests as _cffi_requests
+        _YF_SESSION = _cffi_requests.Session(impersonate="chrome124")
+    except Exception:
+        _YF_SESSION = None
+
+YF_LIVE_DATA_OK = True  # flips to False if repeated live fetches fail this session
+
+
+def get_yf_ticker(symbol):
+    """yf.Ticker with a browser-impersonating session when available."""
+    if _YF_SESSION is not None:
+        try:
+            return yf.Ticker(symbol, session=_YF_SESSION)
+        except Exception:
+            pass
+    return yf.Ticker(symbol)
+
+
+def yf_download_robust(symbol, period, interval, retries=2, **kwargs):
+    """yf.download wrapper with browser-impersonation + retry to reduce
+    Yahoo Finance blocking/rate-limiting on cloud deployments."""
+    global YF_LIVE_DATA_OK
+    for attempt in range(retries + 1):
+        try:
+            if _YF_SESSION is not None:
+                try:
+                    df = yf.download(symbol, period=period, interval=interval,
+                                      progress=False, session=_YF_SESSION, **kwargs)
+                    if df is not None and not df.empty:
+                        YF_LIVE_DATA_OK = True
+                        return df
+                except TypeError:
+                    pass  # installed yfinance version doesn't accept session=
+            df = yf.download(symbol, period=period, interval=interval, progress=False, **kwargs)
+            if df is not None and not df.empty:
+                YF_LIVE_DATA_OK = True
+                return df
+        except Exception:
+            pass
+        time.sleep(0.5 * (attempt + 1))
+    YF_LIVE_DATA_OK = False
+    return pd.DataFrame()
+
 # Auto-install missing critical dependencies including kiteconnect
 try:
     from kiteconnect import KiteConnect, KiteTicker
@@ -1570,7 +1627,7 @@ def get_fundamental_analysis(symbol):
     """
     result = {"symbol": symbol, "ok": False, "sections": {}, "error": None}
     try:
-        tk = yf.Ticker(symbol)
+        tk = get_yf_ticker(symbol)
         info = tk.info or {}
 
         def g(key, default=None):
@@ -1717,7 +1774,7 @@ class EnhancedDataManager:
             if now_ts - cached["ts"] < 2:
                 return cached["price"]
         try:
-            ticker = yf.Ticker(symbol)
+            ticker = get_yf_ticker(symbol)
             df = ticker.history(period="1d", interval="1m")
             if df is not None and not df.empty:
                 price = float(df["Close"].iloc[-1])
@@ -1738,7 +1795,7 @@ class EnhancedDataManager:
     @st.cache_data(ttl=30)
     def _fetch_yf(_self, symbol, period, interval):
         try:
-            return yf.download(symbol, period=period, interval=interval, progress=False, auto_adjust=False)
+            return yf_download_robust(symbol, period, interval, auto_adjust=False)
         except Exception:
             return pd.DataFrame()
 
@@ -1823,6 +1880,7 @@ class EnhancedDataManager:
         except Exception:
             df["HTF_Trend"] = 1
 
+        df.attrs["is_demo"] = False
         return df
 
     def create_validated_demo_data(self, symbol):
@@ -1858,6 +1916,7 @@ class EnhancedDataManager:
         df["Resistance"] = sr["resistance"]
         df["ADX"] = adx(df["High"], df["Low"], df["Close"], period=14)
         df["HTF_Trend"] = 1
+        df.attrs["is_demo"] = True
         return df
 
     def get_historical_accuracy(self, symbol, strategy):
@@ -3279,35 +3338,42 @@ if __name__ == "__main__":
     
         # Market Mood Gauges for Nifty50 & BankNifty
         st.subheader("📊 Market Mood Gauges")
-    
-        try:
-            nifty_data = yf.download("^NSEI", period="1d", interval="5m", auto_adjust=False)
-            nifty_current = float(nifty_data["Close"].iloc[-1])
-            nifty_prev = float(nifty_data["Close"].iloc[-2])
-            nifty_change = ((nifty_current - nifty_prev) / nifty_prev) * 100
-            
-            nifty_sentiment = 50 + (nifty_change * 8)
-            nifty_sentiment = max(0, min(100, round(nifty_sentiment)))
-            
-        except Exception:
-            nifty_current = 22000
-            nifty_change = 0.15
-            nifty_sentiment = 65
-    
-        try:
-            banknifty_data = yf.download("^NSEBANK", period="1d", interval="5m", auto_adjust=False)
-            banknifty_current = float(banknifty_data["Close"].iloc[-1])
-            banknifty_prev = float(banknifty_data["Close"].iloc[-2])
-            banknifty_change = ((banknifty_current - banknifty_prev) / banknifty_prev) * 100
-            
-            banknifty_sentiment = 50 + (banknifty_change * 8)
-            banknifty_sentiment = max(0, min(100, round(banknifty_sentiment)))
-            
-        except Exception:
-            banknifty_current = 48000
-            banknifty_change = 0.25
-            banknifty_sentiment = 70
-    
+
+        @st.cache_data(ttl=30, show_spinner=False)
+        def _fetch_index_snapshot(index_symbol):
+            data = yf_download_robust(index_symbol, period="1d", interval="5m", auto_adjust=False)
+            if data is None or data.empty or len(data) < 2:
+                return None
+            return {
+                "current": float(data["Close"].iloc[-1]),
+                "prev": float(data["Close"].iloc[-2]),
+            }
+
+        mood_data_is_live = True
+
+        snap = _fetch_index_snapshot("^NSEI")
+        if snap:
+            nifty_current = snap["current"]
+            nifty_change = ((snap["current"] - snap["prev"]) / snap["prev"]) * 100
+            nifty_sentiment = max(0, min(100, round(50 + (nifty_change * 8))))
+        else:
+            mood_data_is_live = False
+            nifty_current, nifty_change, nifty_sentiment = 22000, 0.15, 65
+
+        snap = _fetch_index_snapshot("^NSEBANK")
+        if snap:
+            banknifty_current = snap["current"]
+            banknifty_change = ((snap["current"] - snap["prev"]) / snap["prev"]) * 100
+            banknifty_sentiment = max(0, min(100, round(50 + (banknifty_change * 8))))
+        else:
+            mood_data_is_live = False
+            banknifty_current, banknifty_change, banknifty_sentiment = 48000, 0.25, 70
+
+        if not mood_data_is_live:
+            st.warning("⚠️ Live index data unavailable right now (Yahoo Finance may be rate-limiting this server) — "
+                       "showing placeholder values below, not real prices. This usually resolves on its own after a "
+                       "few minutes; if it persists, it's a data-source issue, not an app bug.")
+
         # Display Circular Market Mood Gauges with Rounded Percentages
         col1, col2, col3, col4 = st.columns(4)
         with col1:
@@ -4351,6 +4417,10 @@ if __name__ == "__main__":
                 fp_data = data_manager.get_stock_data(fp_symbol, fp_interval)
 
                 if fp_data is not None and len(fp_data) > 0:
+                    if fp_data.attrs.get("is_demo"):
+                        st.warning(f"⚠️ Live data for {fp_symbol} is unavailable right now (Yahoo Finance may be "
+                                   "rate-limiting this server) — the chart below uses simulated placeholder data, "
+                                   "not real prices/volume.")
                     profile = calculate_market_profile_vectorized(
                         fp_data["High"], fp_data["Low"], fp_data["Close"], fp_data["Volume"], bins=fp_bins
                     )
