@@ -883,9 +883,10 @@ class AdvancedRiskManager:
 
     def calculate_risk_based_position_size(self, available_capital, entry_price, stop_loss,
                                             win_probability=0.5, win_loss_ratio=2.0,
-                                            risk_pct=0.005, max_alloc_pct=0.15, kelly_multiplier=0.25):
+                                            risk_pct=0.005, max_alloc_pct=0.15, kelly_multiplier=0.25,
+                                            use_kelly_cap=False):
         """
-        Risk-based position sizing (recommended primary method):
+        Risk-based position sizing (primary method):
         size the position off how much you're willing to LOSE if the stop is
         hit, not off a flat % of capital. This is what the review flagged as
         item #19 — the old code sized purely as `cash * TRADE_ALLOC / entry`,
@@ -896,13 +897,13 @@ class AdvancedRiskManager:
             risk_per_share  = abs(entry - stop)
             quantity        = risk_per_trade / risk_per_share
 
-        The result is then capped by:
-          - a fractional-Kelly quantity (conservative, since win_probability
-            here is a heuristic estimate, not a calibrated probability — see
-            item #20: raw/half Kelly is not safe on unvalidated probabilities)
-          - a hard ceiling of max_alloc_pct of capital in any single position,
-            regardless of how small the stop distance is (protects against a
-            garbage/too-tight stop producing an oversized quantity)
+        By default (use_kelly_cap=False) the result is capped ONLY by a hard
+        ceiling of max_alloc_pct of capital — per the follow-up review, Kelly
+        should NOT be load-bearing in the primary sizing decision while
+        win_probability is still an uncalibrated heuristic (see item #20/
+        the V2 follow-up review). Pass use_kelly_cap=True to additionally cap
+        by fractional Kelly once your probability estimates are validated
+        against real out-of-sample results.
         """
         try:
             if entry_price is None or entry_price <= 0 or available_capital <= 0:
@@ -917,18 +918,21 @@ class AdvancedRiskManager:
             risk_budget = available_capital * risk_pct
             risk_based_qty = int(risk_budget / risk_per_share)
 
-            # Fractional-Kelly cap (see item #20: don't trust raw Kelly on an
-            # unvalidated win-rate estimate)
-            if win_loss_ratio <= 0:
-                win_loss_ratio = 2.0
-            kelly_fraction = max(0.0, win_probability - (1 - win_probability) / win_loss_ratio)
-            kelly_capital = available_capital * kelly_fraction * kelly_multiplier
-            kelly_qty = int(kelly_capital / entry_price) if kelly_fraction > 0 else risk_based_qty
-
             # Hard concentration ceiling regardless of the above
             hard_cap_qty = int((available_capital * max_alloc_pct) / entry_price)
 
-            qty = min(risk_based_qty, kelly_qty if kelly_qty > 0 else risk_based_qty, hard_cap_qty)
+            qty = min(risk_based_qty, hard_cap_qty)
+
+            if use_kelly_cap:
+                # Optional, off by default (see docstring): fractional-Kelly
+                # cap using an unvalidated win_probability estimate.
+                if win_loss_ratio <= 0:
+                    win_loss_ratio = 2.0
+                kelly_fraction = max(0.0, win_probability - (1 - win_probability) / win_loss_ratio)
+                kelly_capital = available_capital * kelly_fraction * kelly_multiplier
+                kelly_qty = int(kelly_capital / entry_price) if kelly_fraction > 0 else qty
+                qty = min(qty, kelly_qty if kelly_qty > 0 else qty)
+
             return max(0, qty)
         except Exception:
             # Conservative fallback: risk-proxy sizing at 0.5% notional, not TRADE_ALLOC
@@ -2189,11 +2193,15 @@ class RealBacktestEngine:
     first within a fixed lookahead window.
 
     Known limitations (documented rather than hidden):
-      - Support/Resistance columns were computed once over the whole fetched
-        window, not strictly point-in-time as of each historical bar, so
-        there is a small amount of unavoidable lookahead in the S/R levels
-        themselves. ATR/EMA/RSI/MACD/ADX are true rolling/point-in-time
-        values.
+      - Support/Resistance are now computed point-in-time per backtest bar
+        (see _point_in_time_support_resistance) using only a trailing window
+        of prior bars — this closes the look-ahead gap from the previous
+        version, which reused S/R columns computed once over the whole
+        fetched window.
+      - Same-bar SL/TP collisions (a single candle's range touching both
+        levels) are tracked separately and conservatively resolved as a loss,
+        since OHLCV alone can't tell you the intrabar order of touches — see
+        `same_bar_collisions` in get_last_stats().
       - The lookback window is whatever get_stock_data fetched (7 days of
         15m bars ≈ 180-250 bars), so trade counts per symbol will be modest.
         This is a real per-symbol walk-forward stat, not a large multi-year
@@ -2230,10 +2238,13 @@ class RealBacktestEngine:
         self.cache_ttl_seconds = 900    # recompute at most every 15 minutes per symbol/strategy
 
     @staticmethod
-    def _entry_condition(strategy, row, prev_rsi):
+    def _entry_condition(strategy, row, prev_rsi, support=None, resistance=None):
         """Point-in-time entry check for one historical bar. Mirrors the
         live entry logic in generate_strategy_signals / generate_high_accuracy_signals,
-        using only that bar's own indicator values (no future data)."""
+        using only that bar's own indicator values (no future data).
+        support/resistance are passed in explicitly (see calculate_historical_accuracy)
+        so callers can supply a point-in-time value instead of a value computed
+        over the whole fetched window."""
         try:
             ema8, ema21, ema50 = row["EMA8"], row["EMA21"], row["EMA50"]
             rsi_val = row["RSI14"]
@@ -2241,7 +2252,10 @@ class RealBacktestEngine:
             vwap = row["VWAP"]
             adx_val = row.get("ADX", 20)
             macd_line, macd_signal = row.get("MACD", 0), row.get("MACD_Signal", 0)
-            support, resistance = row.get("Support", close * 0.98), row.get("Resistance", close * 1.02)
+            if support is None:
+                support = close * 0.98
+            if resistance is None:
+                resistance = close * 1.02
             vol, vol_avg = row.get("Volume", 0), row.get("Vol_Avg", row.get("Volume", 1))
             bb_lower, bb_upper = row.get("BB_Lower", None), row.get("BB_Upper", None)
             htf_trend = row.get("HTF_Trend", 0)
@@ -2286,9 +2300,39 @@ class RealBacktestEngine:
             return None
         return None
 
+    @staticmethod
+    def _point_in_time_support_resistance(df, i, lookback=100, period=8):
+        """
+        Compute Support/Resistance using ONLY bars up to and including index i
+        (a trailing slice), rather than the whole fetched window. This closes
+        the look-ahead gap the review flagged: calculate_support_resistance_advanced
+        itself only marks a bar as a pivot once `period` bars on both sides
+        confirm it, so feeding it a slice that ends at i means no pivot can
+        ever be confirmed using data the strategy couldn't have seen yet at
+        bar i. `lookback` bounds the slice so this stays cheap to recompute
+        at every backtest step.
+        """
+        start = max(0, i - lookback)
+        try:
+            sr = calculate_support_resistance_advanced(
+                df["High"].iloc[start:i + 1], df["Low"].iloc[start:i + 1], df["Close"].iloc[start:i + 1],
+                period=period
+            )
+            return sr["support"], sr["resistance"]
+        except Exception:
+            close = float(df["Close"].iloc[i])
+            return close * 0.98, close * 1.02
+
     def _simulate_forward(self, df, entry_idx, action, entry_price, atr):
-        """Given a trigger bar, simulate forward using High/Low of the
-        following bars to see whether target or stop is hit first."""
+        """
+        Given a trigger bar, simulate forward using High/Low of the following
+        bars to see whether target or stop is hit first.
+        Returns (outcome, same_bar_collision) where outcome is "WIN"/"LOSS"/None
+        and same_bar_collision is True if a single bar's range touched BOTH
+        the stop and the target (in which case we conservatively assume the
+        stop was hit first, since intrabar order is unknown from OHLCV alone —
+        see review: this is a labeled assumption, not a measured fact).
+        """
         if atr is None or atr <= 0 or np.isnan(atr):
             atr = max(entry_price * 0.005, 0.01)
         if action == "BUY":
@@ -2301,23 +2345,29 @@ class RealBacktestEngine:
         window = df.iloc[entry_idx + 1: entry_idx + 1 + self.LOOKAHEAD_BARS]
         for _, bar in window.iterrows():
             if action == "BUY":
-                if bar["Low"] <= stop:
-                    return "LOSS"
-                if bar["High"] >= target:
-                    return "WIN"
+                stop_hit = bar["Low"] <= stop
+                target_hit = bar["High"] >= target
             else:
-                if bar["High"] >= stop:
-                    return "LOSS"
-                if bar["Low"] <= target:
-                    return "WIN"
-        return None  # neither hit within the lookahead window
+                stop_hit = bar["High"] >= stop
+                target_hit = bar["Low"] <= target
+            if stop_hit and target_hit:
+                return "LOSS", True   # ambiguous same-bar collision; conservative assumption
+            if stop_hit:
+                return "LOSS", False
+            if target_hit:
+                return "WIN", False
+        return None, False  # neither hit within the lookahead window
 
     def calculate_historical_accuracy(self, symbol, strategy, data):
         """
         Real walk-forward win-rate for `strategy` on `symbol`, computed from
-        the historical bars in `data`. Falls back to a labeled prior estimate
+        the historical bars in `data`, using point-in-time Support/Resistance
+        (no look-ahead — see _point_in_time_support_resistance) and tracking
+        same-bar SL/TP collisions separately rather than silently folding
+        them into the loss count. Falls back to a labeled prior estimate
         (blended, or fully if no usable data) — see PRIOR_ESTIMATES.
-        Returns a float win rate.
+        Returns a float win rate. Use get_last_stats() for the full detail
+        (trades, wins, losses, collisions, expectancy_R).
         """
         try:
             if data is None or len(data) < 60 or bool(getattr(data, "attrs", {}).get("is_demo", False)):
@@ -2332,17 +2382,22 @@ class RealBacktestEngine:
             df = data.copy()
             df["Vol_Avg"] = df["Volume"].rolling(20).mean()
 
-            wins, losses = 0, 0
+            wins, losses, collisions = 0, 0, 0
             warmup = 55  # let EMA50/ADX/etc. stabilize before trusting a signal
             end = len(df) - self.LOOKAHEAD_BARS - 1
             for i in range(warmup, max(warmup, end)):
                 row = df.iloc[i]
                 prev_rsi = df["RSI14"].iloc[i - 1] if i > 0 else None
-                action = self._entry_condition(strategy, row, prev_rsi)
+                # Point-in-time S/R: computed from bars [0..i] only, never the
+                # whole fetched window (see _point_in_time_support_resistance).
+                support, resistance = self._point_in_time_support_resistance(df, i)
+                action = self._entry_condition(strategy, row, prev_rsi, support=support, resistance=resistance)
                 if action is None:
                     continue
                 atr = row.get("ATR", None)
-                outcome = self._simulate_forward(df, i, action, float(row["Close"]), atr)
+                outcome, same_bar_collision = self._simulate_forward(df, i, action, float(row["Close"]), atr)
+                if same_bar_collision:
+                    collisions += 1
                 if outcome == "WIN":
                     wins += 1
                 elif outcome == "LOSS":
@@ -2365,8 +2420,15 @@ class RealBacktestEngine:
                     win_rate = measured
 
             win_rate = max(0.3, min(0.9, win_rate))
+            # Expectancy in R, using this engine's own target/stop multiples
+            # (RISK_MULT_TARGET for a win, -1R for a loss) — see review's point
+            # that win-rate alone is the wrong thing to rank on; expectancy
+            # is what should ultimately drive signal ranking.
+            expectancy_r = (win_rate * self.RISK_MULT_TARGET) - ((1 - win_rate) * 1.0)
+
             self.historical_results[cache_key] = {
                 "win_rate": win_rate, "trades": total, "wins": wins, "losses": losses,
+                "same_bar_collisions": collisions, "expectancy_r": expectancy_r,
                 "last_ts": last_ts, "computed_at": time.time(),
             }
             return win_rate
@@ -2375,7 +2437,7 @@ class RealBacktestEngine:
             return self.PRIOR_ESTIMATES.get(strategy, 0.6)
 
     def get_last_stats(self, symbol, strategy, n_bars):
-        """Optional: expose trade count/wins/losses for UI display."""
+        """Expose trade count/wins/losses/collisions/expectancy for UI display."""
         return self.historical_results.get((symbol, strategy, n_bars))
 
 
