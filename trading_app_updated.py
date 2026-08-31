@@ -4067,902 +4067,957 @@ if __name__ == "__main__":
         ])
     
         # Tab 1: Dashboard
-        with tabs[0]:
-            st.subheader("Account Summary")
-            trader.update_positions_pnl()
-            perf = trader.get_performance_stats()
+        try:
+            with tabs[0]:
+                st.subheader("Account Summary")
+                trader.update_positions_pnl()
+                perf = trader.get_performance_stats()
             
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Total Value", f"₹{trader.equity():,.0f}", delta=f"₹{trader.equity() - trader.initial_capital:+,.0f}")
-            c2.metric("Available Cash", f"₹{trader.cash:,.0f}")
-            c3.metric("Open Positions", len(trader.positions))
-            c4.metric("Total P&L", f"₹{perf['total_pnl'] + perf['open_pnl']:+.2f}")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Total Value", f"₹{trader.equity():,.0f}", delta=f"₹{trader.equity() - trader.initial_capital:+,.0f}")
+                c2.metric("Available Cash", f"₹{trader.cash:,.0f}")
+                c3.metric("Open Positions", len(trader.positions))
+                c4.metric("Total P&L", f"₹{perf['total_pnl'] + perf['open_pnl']:+.2f}")
             
-            # Strategy Performance Overview
-            st.subheader("Strategy Performance Overview")
-            strategy_data = []
-            for strategy, config in TRADING_STRATEGIES.items():
-                if strategy in trader.strategy_performance:
-                    perf_data = trader.strategy_performance[strategy]
-                    if perf_data["trades"] > 0:
-                        win_rate = perf_data["wins"] / perf_data["trades"]
-                        strategy_data.append({
-                            "Strategy": config["name"],
-                            "Type": config["type"],
-                            "Signals": perf_data["signals"],
-                            "Trades": perf_data["trades"],
-                            "Win Rate": f"{win_rate:.1%}",
-                            "P&L": f"₹{perf_data['pnl']:+.2f}"
-                        })
+                # Strategy Performance Overview
+                st.subheader("Strategy Performance Overview")
+                strategy_data = []
+                for strategy, config in TRADING_STRATEGIES.items():
+                    if strategy in trader.strategy_performance:
+                        perf_data = trader.strategy_performance[strategy]
+                        if perf_data["trades"] > 0:
+                            win_rate = perf_data["wins"] / perf_data["trades"]
+                            strategy_data.append({
+                                "Strategy": config["name"],
+                                "Type": config["type"],
+                                "Signals": perf_data["signals"],
+                                "Trades": perf_data["trades"],
+                                "Win Rate": f"{win_rate:.1%}",
+                                "P&L": f"₹{perf_data['pnl']:+.2f}"
+                            })
             
-            # Add high accuracy strategies
-            for strategy, config in HIGH_ACCURACY_STRATEGIES.items():
-                if strategy in trader.strategy_performance:
-                    perf_data = trader.strategy_performance[strategy]
-                    if perf_data["trades"] > 0:
-                        win_rate = perf_data["wins"] / perf_data["trades"]
-                        strategy_data.append({
-                            "Strategy": f"🔥 {config['name']}",
-                            "Type": config["type"],
-                            "Signals": perf_data["signals"],
-                            "Trades": perf_data["trades"],
-                            "Win Rate": f"{win_rate:.1%}",
-                            "P&L": f"₹{perf_data['pnl']:+.2f}"
-                        })
+                # Add high accuracy strategies
+                for strategy, config in HIGH_ACCURACY_STRATEGIES.items():
+                    if strategy in trader.strategy_performance:
+                        perf_data = trader.strategy_performance[strategy]
+                        if perf_data["trades"] > 0:
+                            win_rate = perf_data["wins"] / perf_data["trades"]
+                            strategy_data.append({
+                                "Strategy": f"🔥 {config['name']}",
+                                "Type": config["type"],
+                                "Signals": perf_data["signals"],
+                                "Trades": perf_data["trades"],
+                                "Win Rate": f"{win_rate:.1%}",
+                                "P&L": f"₹{perf_data['pnl']:+.2f}"
+                            })
             
-            if strategy_data:
-                st.dataframe(pd.DataFrame(strategy_data), width='stretch')
-            else:
-                st.info("No strategy performance data available yet.")
-            
-            # Open Positions
-            st.subheader("📊 Open Positions")
-            open_positions = trader.get_open_positions_data()
-            if open_positions:
-                st.dataframe(pd.DataFrame(open_positions), width='stretch')
-            else:
-                st.info("No open positions")
-    
-        # Tab 2: Signals
-        with tabs[1]:
-            st.subheader("Multi-Strategy BUY/SELL Signals")
-            st.markdown("""
-            <div class="alert-success">
-                <strong>🎯 UPDATED Signal Parameters:</strong> 
-                • Confidence threshold reduced from 75% to <strong>70%</strong><br>
-                • Minimum score reduced from 7 to <strong>6</strong><br>
-                • Added ADX trend filter: <strong>ADX > 25</strong><br>
-                • Optimized for peak market hours (9:30 AM - 2:30 PM)<br>
-                • These changes should generate more trading opportunities
-            </div>
-            """, unsafe_allow_html=True)
-            
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col1:
-                generate_btn = st.button("Generate Signals", type="primary", width='stretch', key="generate_signals_btn")
-            with col2:
-                if trader.auto_execution:
-                    auto_status = "🟢 ACTIVE"
-                    status_color = "#059669"
+                if strategy_data:
+                    st.dataframe(pd.DataFrame(strategy_data), width='stretch')
                 else:
-                    auto_status = "⚪ INACTIVE"
-                    status_color = "#6b7280"
-                st.markdown(f"""
-                <div class="metric-card">
-                    <div style="font-size: 12px; color: #6b7280;">Auto Execution</div>
-                    <div style="font-size: 18px; font-weight: bold; color: {status_color};">{auto_status}</div>
-                    <div style="font-size: 11px; margin-top: 3px;">Market: {'🟢 OPEN' if market_open() else '🔴 CLOSED'}</div>
+                    st.info("No strategy performance data available yet.")
+            
+                # Open Positions
+                st.subheader("📊 Open Positions")
+                open_positions = trader.get_open_positions_data()
+                if open_positions:
+                    st.dataframe(pd.DataFrame(open_positions), width='stretch')
+                else:
+                    st.info("No open positions")
+    
+            # Tab 2: Signals
+        except Exception as _tab_e:
+            with tabs[0]:
+                st.error(f"Error rendering 'Dashboard' tab: {_tab_e}")
+                st.code(traceback.format_exc())
+        try:
+            with tabs[1]:
+                st.subheader("Multi-Strategy BUY/SELL Signals")
+                st.markdown("""
+                <div class="alert-success">
+                    <strong>🎯 UPDATED Signal Parameters:</strong> 
+                    • Confidence threshold reduced from 75% to <strong>70%</strong><br>
+                    • Minimum score reduced from 7 to <strong>6</strong><br>
+                    • Added ADX trend filter: <strong>ADX > 25</strong><br>
+                    • Optimized for peak market hours (9:30 AM - 2:30 PM)<br>
+                    • These changes should generate more trading opportunities
                 </div>
                 """, unsafe_allow_html=True)
-            with col3:
-                # Add auto-execution button
-                if trader.auto_execution and trader.can_auto_trade():
-                    auto_exec_btn = st.button("🚀 Auto Execute", type="secondary", width='stretch', 
-                                             help="Manually trigger auto-execution of current signals", key="auto_exec_btn")
-                else:
-                    auto_exec_btn = False
             
-            # Initialize session state for tracking auto-execution
-            if "auto_execution_triggered" not in st.session_state:
-                st.session_state.auto_execution_triggered = False
-            if "last_signal_generation" not in st.session_state:
-                st.session_state.last_signal_generation = 0
-            
-            # Check if we should auto-generate signals
-            current_time = time.time()
-            auto_generate = False
-            
-            # Auto-generate if:
-            # 1. Auto-execution is enabled AND market is open AND it's been more than 60 seconds since last generation
-            # 2. During peak hours, generate more frequently (every 45 seconds)
-            if trader.auto_execution and market_open():
-                time_since_last = current_time - st.session_state.last_signal_generation
-                if is_peak_market_hours() and time_since_last > 45:  # More frequent during peak hours
-                    auto_generate = True
-                    st.session_state.last_signal_generation = current_time
-                elif time_since_last > 60:  # Normal frequency
-                    auto_generate = True
-                    st.session_state.last_signal_generation = current_time
-            
-            generate_signals = generate_btn or auto_generate
-            
-            if generate_signals:
-                with st.spinner(f"Scanning {universe} stocks with enhanced strategies..."):
-                    # Use high accuracy when enabled
-                    signals = trader.generate_quality_signals(
-                        universe, 
-                        max_scan=max_scan,  # Use the corrected max_scan parameter
-                        min_confidence=min_conf_percent/100.0, 
-                        min_score=min_score,
-                        use_high_accuracy=enable_high_accuracy
-                    )
-                
-                if signals:
-                    # Separate BUY and SELL signals
-                    buy_signals = [s for s in signals if s["action"] == "BUY"]
-                    sell_signals = [s for s in signals if s["action"] == "SELL"]
-                    
-                    st.success(f"✅ Found {len(buy_signals)} BUY signals and {len(sell_signals)} SELL signals (After quality filtering)")
-                    
-                    data_rows = []
-                    for s in signals:
-                        # Check if it's a high accuracy strategy
-                        is_high_acc = s["strategy"] in HIGH_ACCURACY_STRATEGIES
-                        strategy_display = f"🔥 {s['strategy_name']}" if is_high_acc else s['strategy_name']
-                        
-                        # Quality score display
-                        quality_score = s.get('quality_score', 0)
-                        if quality_score >= 80:
-                            quality_text = "🟢 High"
-                        elif quality_score >= 60:
-                            quality_text = "🟡 Medium"
-                        else:
-                            quality_text = "🔴 Low"
-                        
-                        data_rows.append({
-                            "Symbol": s["symbol"].replace(".NS",""),
-                            "Action": s["action"],
-                            "Strategy": strategy_display,
-                            "Entry Price": f"₹{s['entry']:.2f}",
-                            "Current Price": f"₹{s['current_price']:.2f}",
-                            "Target": f"₹{s['target']:.2f}",
-                            "Stop Loss": f"₹{s['stop_loss']:.2f}",
-                            "Confidence": f"{s['confidence']:.1%}",
-                            "Quality": quality_text,
-                            "Volume Ratio": f"{s.get('volume_ratio', 1):.1f}x",
-                            "R:R": f"{s['risk_reward']:.2f}",
-                            "Score": s['score'],
-                            "RSI": f"{s['rsi']:.1f}"
-                        })
-                    
-                    st.dataframe(pd.DataFrame(data_rows), width='stretch')
-                    
-                    # AUTO-EXECUTION LOGIC
+                col1, col2, col3 = st.columns([1, 2, 1])
+                with col1:
+                    generate_btn = st.button("Generate Signals", type="primary", width='stretch', key="generate_signals_btn")
+                with col2:
+                    if trader.auto_execution:
+                        auto_status = "🟢 ACTIVE"
+                        status_color = "#059669"
+                    else:
+                        auto_status = "⚪ INACTIVE"
+                        status_color = "#6b7280"
+                    st.markdown(f"""
+                    <div class="metric-card">
+                        <div style="font-size: 12px; color: #6b7280;">Auto Execution</div>
+                        <div style="font-size: 18px; font-weight: bold; color: {status_color};">{auto_status}</div>
+                        <div style="font-size: 11px; margin-top: 3px;">Market: {'🟢 OPEN' if market_open() else '🔴 CLOSED'}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with col3:
+                    # Add auto-execution button
                     if trader.auto_execution and trader.can_auto_trade():
-                        # Check if we should auto-execute
-                        auto_execute_now = False
-                        
-                        # Auto-execute if:
-                        # 1. Auto-execution button was clicked
-                        # 2. OR if we have signals and auto-execution is enabled (auto-generate mode)
-                        if auto_exec_btn:
-                            auto_execute_now = True
-                            st.info("🚀 Manual auto-execution triggered")
-                        elif auto_generate:
-                            # Auto-execute only high-quality signals (quality score >= 80)
-                            high_quality_signals = [s for s in signals if s.get('quality_score', 0) >= 80]
-                            if high_quality_signals:
-                                auto_execute_now = True
-                                st.info(f"🚀 Found {len(high_quality_signals)} high-quality signals for auto-execution")
-                        
-                        if auto_execute_now:
-                            executed = trader.auto_execute_signals(signals)
-                            if executed:
-                                st.success(f"✅ Auto-execution completed: {len(executed)} trades executed")
-                                for msg in executed:
-                                    st.write(f"✓ {msg}")
-                                # Refresh to show new positions
-                                st.rerun()
-                            else:
-                                st.warning("No trades were auto-executed. Check trade limits or existing positions.")
-                        elif trader.auto_execution and not auto_execute_now:
-                            st.info("Auto-execution is active. High-quality signals (score ≥ 80) will be executed automatically.")
+                        auto_exec_btn = st.button("🚀 Auto Execute", type="secondary", width='stretch', 
+                                                 help="Manually trigger auto-execution of current signals", key="auto_exec_btn")
+                    else:
+                        auto_exec_btn = False
+            
+                # Initialize session state for tracking auto-execution
+                if "auto_execution_triggered" not in st.session_state:
+                    st.session_state.auto_execution_triggered = False
+                if "last_signal_generation" not in st.session_state:
+                    st.session_state.last_signal_generation = 0
+            
+                # Check if we should auto-generate signals
+                current_time = time.time()
+                auto_generate = False
+            
+                # Auto-generate if:
+                # 1. Auto-execution is enabled AND market is open AND it's been more than 60 seconds since last generation
+                # 2. During peak hours, generate more frequently (every 45 seconds)
+                if trader.auto_execution and market_open():
+                    time_since_last = current_time - st.session_state.last_signal_generation
+                    if is_peak_market_hours() and time_since_last > 45:  # More frequent during peak hours
+                        auto_generate = True
+                        st.session_state.last_signal_generation = current_time
+                    elif time_since_last > 60:  # Normal frequency
+                        auto_generate = True
+                        st.session_state.last_signal_generation = current_time
+            
+                generate_signals = generate_btn or auto_generate
+            
+                if generate_signals:
+                    with st.spinner(f"Scanning {universe} stocks with enhanced strategies..."):
+                        # Use high accuracy when enabled
+                        signals = trader.generate_quality_signals(
+                            universe, 
+                            max_scan=max_scan,  # Use the corrected max_scan parameter
+                            min_confidence=min_conf_percent/100.0, 
+                            min_score=min_score,
+                            use_high_accuracy=enable_high_accuracy
+                        )
+                
+                    if signals:
+                        # Separate BUY and SELL signals
+                        buy_signals = [s for s in signals if s["action"] == "BUY"]
+                        sell_signals = [s for s in signals if s["action"] == "SELL"]
                     
-                    st.subheader("Manual Execution")
-                    for idx, s in enumerate(signals[:5]):  # Show only first 5 for better UI
-                        quality_score = s.get('quality_score', 0)
-                        if quality_score >= 80:
-                            quality_class = "high-quality-signal"
-                        elif quality_score >= 60:
-                            quality_class = "medium-quality-signal"
-                        else:
-                            quality_class = "low-quality-signal"
-                        
-                        col_a, col_b, col_c = st.columns([3,1,1])
-                        with col_a:
-                            action_color = "🟢" if s["action"] == "BUY" else "🔴"
+                        st.success(f"✅ Found {len(buy_signals)} BUY signals and {len(sell_signals)} SELL signals (After quality filtering)")
+                    
+                        data_rows = []
+                        for s in signals:
+                            # Check if it's a high accuracy strategy
                             is_high_acc = s["strategy"] in HIGH_ACCURACY_STRATEGIES
                             strategy_display = f"🔥 {s['strategy_name']}" if is_high_acc else s['strategy_name']
-                            volume_ratio = s.get('volume_ratio', 1)
+                        
+                            # Quality score display
+                            quality_score = s.get('quality_score', 0)
+                            if quality_score >= 80:
+                                quality_text = "🟢 High"
+                            elif quality_score >= 60:
+                                quality_text = "🟡 Medium"
+                            else:
+                                quality_text = "🔴 Low"
+                        
+                            data_rows.append({
+                                "Symbol": s["symbol"].replace(".NS",""),
+                                "Action": s["action"],
+                                "Strategy": strategy_display,
+                                "Entry Price": f"₹{s['entry']:.2f}",
+                                "Current Price": f"₹{s['current_price']:.2f}",
+                                "Target": f"₹{s['target']:.2f}",
+                                "Stop Loss": f"₹{s['stop_loss']:.2f}",
+                                "Confidence": f"{s['confidence']:.1%}",
+                                "Quality": quality_text,
+                                "Volume Ratio": f"{s.get('volume_ratio', 1):.1f}x",
+                                "R:R": f"{s['risk_reward']:.2f}",
+                                "Score": s['score'],
+                                "RSI": f"{s['rsi']:.1f}"
+                            })
+                    
+                        st.dataframe(pd.DataFrame(data_rows), width='stretch')
+                    
+                        # AUTO-EXECUTION LOGIC
+                        if trader.auto_execution and trader.can_auto_trade():
+                            # Check if we should auto-execute
+                            auto_execute_now = False
+                        
+                            # Auto-execute if:
+                            # 1. Auto-execution button was clicked
+                            # 2. OR if we have signals and auto-execution is enabled (auto-generate mode)
+                            if auto_exec_btn:
+                                auto_execute_now = True
+                                st.info("🚀 Manual auto-execution triggered")
+                            elif auto_generate:
+                                # Auto-execute only high-quality signals (quality score >= 80)
+                                high_quality_signals = [s for s in signals if s.get('quality_score', 0) >= 80]
+                                if high_quality_signals:
+                                    auto_execute_now = True
+                                    st.info(f"🚀 Found {len(high_quality_signals)} high-quality signals for auto-execution")
+                        
+                            if auto_execute_now:
+                                executed = trader.auto_execute_signals(signals)
+                                if executed:
+                                    st.success(f"✅ Auto-execution completed: {len(executed)} trades executed")
+                                    for msg in executed:
+                                        st.write(f"✓ {msg}")
+                                    # Refresh to show new positions
+                                    st.rerun()
+                                else:
+                                    st.warning("No trades were auto-executed. Check trade limits or existing positions.")
+                            elif trader.auto_execution and not auto_execute_now:
+                                st.info("Auto-execution is active. High-quality signals (score ≥ 80) will be executed automatically.")
+                    
+                        st.subheader("Manual Execution")
+                        for idx, s in enumerate(signals[:5]):  # Show only first 5 for better UI
+                            quality_score = s.get('quality_score', 0)
+                            if quality_score >= 80:
+                                quality_class = "high-quality-signal"
+                            elif quality_score >= 60:
+                                quality_class = "medium-quality-signal"
+                            else:
+                                quality_class = "low-quality-signal"
+                        
+                            col_a, col_b, col_c = st.columns([3,1,1])
+                            with col_a:
+                                action_color = "🟢" if s["action"] == "BUY" else "🔴"
+                                is_high_acc = s["strategy"] in HIGH_ACCURACY_STRATEGIES
+                                strategy_display = f"🔥 {s['strategy_name']}" if is_high_acc else s['strategy_name']
+                                volume_ratio = s.get('volume_ratio', 1)
                             
+                                st.markdown(f"""
+                                <div class="{quality_class}">
+                                    <strong>{action_color} {s['symbol'].replace('.NS','')}</strong> - {s['action']} @ ₹{s['entry']:.2f}<br>
+                                    Strategy: {strategy_display} | Quality: {quality_score}/100<br>
+                                    R:R: {s['risk_reward']:.2f} | Volume: {volume_ratio:.1f}x
+                                </div>
+                                """, unsafe_allow_html=True)
+                            with col_b:
+                                if kelly_sizing:
+                                    try:
+                                        data = trader.data_manager.get_stock_data(s["symbol"], "15m")
+                                        atr = data["ATR"].iloc[-1] if "ATR" in data.columns else s["entry"] * 0.01
+                                        qty = trader.data_manager.calculate_optimal_position_size(
+                                            s["symbol"], s["win_probability"], s["risk_reward"], 
+                                            trader.cash, s["entry"], atr, stop_loss=s.get("stop_loss")
+                                        )
+                                    except:
+                                        qty = int((trader.cash * TRADE_ALLOC) / s["entry"])
+                                else:
+                                    qty = int((trader.cash * TRADE_ALLOC) / s["entry"])
+                                st.write(f"Qty: {qty}")
+                                if s.get("is_demo"):
+                                    st.caption("⛔ Synthetic/demo data — execution blocked")
+                            with col_c:
+                                if st.button(f"Execute", key=f"exec_{s['symbol']}_{s['strategy']}_{idx}_{int(time.time())}"):
+                                    success, msg = trader.execute_trade(
+                                        symbol=s["symbol"], action=s["action"], quantity=qty, price=s["entry"],
+                                        stop_loss=s["stop_loss"], target=s["target"], win_probability=s.get("win_probability",0.75),
+                                        strategy=s.get("strategy"), is_demo_data=s.get("is_demo", False)
+                                    )
+                                    if success:
+                                        st.success(msg)
+                                        st.rerun()
+                                    else:
+                                        st.error(msg)
+                    else:
+                        # Provide helpful feedback when no signals are found
+                        if market_open():
+                            st.warning("""
+                            **No signals found. Possible reasons:**
+                            1. **Market Regime**: Current market regime (**{}**) may not be favorable for the selected strategies.
+                            2. **Strict Filters**: ADX trend filter (ADX > 25) may be too restrictive.
+                            3. **Time of Day**: Try scanning during peak market hours (9:30 AM - 2:30 PM).
+                        
+                            **Suggestions:**
+                            - Try disabling "Require ADX > 25" in sidebar
+                            - Try lowering confidence threshold below 70%
+                            - Try lowering minimum score below 6
+                            - Scan during peak market hours (9:30 AM - 2:30 PM)
+                            """.format(market_regime))
+                        else:
+                            st.info("Market is closed. Signals are only generated during market hours (9:15 AM - 3:30 PM).")
+                else:
+                    # Show auto-execution status when no signals generated
+                    if trader.auto_execution:
+                        if market_open():
+                            st.info("🔄 Auto-execution is active. High-quality signals will be generated and executed automatically during market hours.")
+                            st.write(f"**Auto-execution status:**")
+                            st.write(f"- Daily trades: {trader.daily_trades}/{MAX_DAILY_TRADES}")
+                            st.write(f"- Auto trades: {trader.auto_trades_count}/{MAX_AUTO_TRADES}")
+                            st.write(f"- Available cash: ₹{trader.cash:,.0f}")
+                            st.write(f"- Can auto-trade: {'✅ Yes' if trader.can_auto_trade() else '❌ No'}")
+                            st.write(f"- Peak hours active: {'✅ Yes' if is_peak_market_hours() else '❌ No'}")
+                        
+                            # Show countdown to next auto-scan
+                            time_since_last = int(current_time - st.session_state.last_signal_generation)
+                            if is_peak_market_hours():
+                                time_to_next = max(0, 45 - time_since_last)
+                            else:
+                                time_to_next = max(0, 60 - time_since_last)
+                            st.write(f"- Next auto-scan in: {time_to_next} seconds")
+                        else:
+                            st.warning("Market is closed. Auto-execution will resume when market opens (9:15 AM - 3:30 PM).")
+    
+            # Tab 3: Paper Trading
+        except Exception as _tab_e:
+            with tabs[1]:
+                st.error(f"Error rendering 'Signals' tab: {_tab_e}")
+                st.code(traceback.format_exc())
+        try:
+            with tabs[2]:
+                st.subheader("💰 Paper Trading")
+            
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    symbol = st.selectbox("Symbol", NIFTY_50[:20], key="paper_symbol_select")
+                with col2:
+                    action = st.selectbox("Action", ["BUY", "SELL"], key="paper_action_select")
+                with col3:
+                    quantity = st.number_input("Quantity", min_value=1, value=10, key="paper_qty_input")
+                with col4:
+                    strategy = st.selectbox("Strategy", ["Manual"] + [config["name"] for config in TRADING_STRATEGIES.values()], key="paper_strategy_select")
+            
+                if st.button("Execute Paper Trade", type="primary", key="paper_execute_btn"):
+                    try:
+                        data = data_manager.get_stock_data(symbol, "15m")
+                        price = float(data["Close"].iloc[-1])
+                    
+                        # Calculate support/resistance, ATR for stop loss/target
+                        atr = float(data["ATR"].iloc[-1]) if 'ATR' in data.columns else price * 0.01
+                        support, resistance = trader.calculate_support_resistance(symbol, price)
+                    
+                        # Calculate stop loss and target using IMPROVED method
+                        target, stop_loss = trader.calculate_improved_stop_target(
+                            price, action, atr, price, support, resistance
+                        )
+                    
+                        # Get strategy key
+                        strategy_key = "Manual"
+                        for key, config in TRADING_STRATEGIES.items():
+                            if config["name"] == strategy:
+                                strategy_key = key
+                                break
+                    
+                        # Execute the trade
+                        success, msg = trader.execute_trade(
+                            symbol=symbol,
+                            action=action,
+                            quantity=quantity,
+                            price=price,
+                            stop_loss=stop_loss,
+                            target=target,
+                            win_probability=0.75,
+                            auto_trade=False,
+                            strategy=strategy_key
+                        )
+                    
+                        if success:
+                            st.success(f"✅ {msg}")
+                            st.success(f"Stop Loss: ₹{stop_loss:.2f} | Target: ₹{target:.2f} | R:R: {(abs(target-price)/abs(price-stop_loss)):.2f}:1")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {msg}")
+                        
+                    except Exception as e:
+                        st.error(f"Trade execution failed: {str(e)}")
+            
+                # Show current positions
+                st.subheader("Current Positions")
+                positions_df = trader.get_open_positions_data()
+                if positions_df:
+                    # Create a better display with action buttons
+                    for idx, pos in enumerate(positions_df):
+                        col1, col2, col3 = st.columns([3, 1, 1])
+                        with col1:
+                            action_color = "🟢" if pos['Action'] == 'BUY' else "🔴"
+                            pnl_text = pos['P&L']
+                            pnl_value = float(pnl_text.replace('₹', '').replace('+', '').replace(',', ''))
+                            pnl_color = "green" if pnl_value >= 0 else "red"
+                        
                             st.markdown(f"""
-                            <div class="{quality_class}">
-                                <strong>{action_color} {s['symbol'].replace('.NS','')}</strong> - {s['action']} @ ₹{s['entry']:.2f}<br>
-                                Strategy: {strategy_display} | Quality: {quality_score}/100<br>
-                                R:R: {s['risk_reward']:.2f} | Volume: {volume_ratio:.1f}x
+                            <div style="padding: 10px; border-left: 4px solid {'#059669' if pos['Action'] == 'BUY' else '#dc2626'}; 
+                                     background: linear-gradient(135deg, {'#d1fae5' if pos['Action'] == 'BUY' else '#fee2e2'} 0%, 
+                                     {'#a7f3d0' if pos['Action'] == 'BUY' else '#fecaca'} 100%); border-radius: 8px;">
+                                <strong>{action_color} {pos['Symbol']}</strong> | {pos['Action']} | Qty: {pos['Quantity']}<br>
+                                Entry: {pos['Entry Price']} | Current: {pos['Current Price']}<br>
+                                <span style="color: {pnl_color}">{pnl_text}</span> | {pos['Variance %']}
                             </div>
                             """, unsafe_allow_html=True)
-                        with col_b:
-                            if kelly_sizing:
-                                try:
-                                    data = trader.data_manager.get_stock_data(s["symbol"], "15m")
-                                    atr = data["ATR"].iloc[-1] if "ATR" in data.columns else s["entry"] * 0.01
-                                    qty = trader.data_manager.calculate_optimal_position_size(
-                                        s["symbol"], s["win_probability"], s["risk_reward"], 
-                                        trader.cash, s["entry"], atr, stop_loss=s.get("stop_loss")
-                                    )
-                                except:
-                                    qty = int((trader.cash * TRADE_ALLOC) / s["entry"])
-                            else:
-                                qty = int((trader.cash * TRADE_ALLOC) / s["entry"])
-                            st.write(f"Qty: {qty}")
-                            if s.get("is_demo"):
-                                st.caption("⛔ Synthetic/demo data — execution blocked")
-                        with col_c:
-                            if st.button(f"Execute", key=f"exec_{s['symbol']}_{s['strategy']}_{idx}_{int(time.time())}"):
-                                success, msg = trader.execute_trade(
-                                    symbol=s["symbol"], action=s["action"], quantity=qty, price=s["entry"],
-                                    stop_loss=s["stop_loss"], target=s["target"], win_probability=s.get("win_probability",0.75),
-                                    strategy=s.get("strategy"), is_demo_data=s.get("is_demo", False)
-                                )
+                    
+                        with col2:
+                            st.write(f"SL: {pos['Stop Loss']}")
+                            st.write(f"TG: {pos['Target']}")
+                    
+                        with col3:
+                            if st.button(f"Close", key=f"close_{pos['Symbol']}_{idx}", type="secondary"):
+                                success, msg = trader.close_position(f"{pos['Symbol']}.NS")
                                 if success:
                                     st.success(msg)
                                     st.rerun()
                                 else:
                                     st.error(msg)
+                
+                    st.dataframe(pd.DataFrame(positions_df), width='stretch')
                 else:
-                    # Provide helpful feedback when no signals are found
-                    if market_open():
-                        st.warning("""
-                        **No signals found. Possible reasons:**
-                        1. **Market Regime**: Current market regime (**{}**) may not be favorable for the selected strategies.
-                        2. **Strict Filters**: ADX trend filter (ADX > 25) may be too restrictive.
-                        3. **Time of Day**: Try scanning during peak market hours (9:30 AM - 2:30 PM).
-                        
-                        **Suggestions:**
-                        - Try disabling "Require ADX > 25" in sidebar
-                        - Try lowering confidence threshold below 70%
-                        - Try lowering minimum score below 6
-                        - Scan during peak market hours (9:30 AM - 2:30 PM)
-                        """.format(market_regime))
-                    else:
-                        st.info("Market is closed. Signals are only generated during market hours (9:15 AM - 3:30 PM).")
-            else:
-                # Show auto-execution status when no signals generated
-                if trader.auto_execution:
-                    if market_open():
-                        st.info("🔄 Auto-execution is active. High-quality signals will be generated and executed automatically during market hours.")
-                        st.write(f"**Auto-execution status:**")
-                        st.write(f"- Daily trades: {trader.daily_trades}/{MAX_DAILY_TRADES}")
-                        st.write(f"- Auto trades: {trader.auto_trades_count}/{MAX_AUTO_TRADES}")
-                        st.write(f"- Available cash: ₹{trader.cash:,.0f}")
-                        st.write(f"- Can auto-trade: {'✅ Yes' if trader.can_auto_trade() else '❌ No'}")
-                        st.write(f"- Peak hours active: {'✅ Yes' if is_peak_market_hours() else '❌ No'}")
-                        
-                        # Show countdown to next auto-scan
-                        time_since_last = int(current_time - st.session_state.last_signal_generation)
-                        if is_peak_market_hours():
-                            time_to_next = max(0, 45 - time_since_last)
-                        else:
-                            time_to_next = max(0, 60 - time_since_last)
-                        st.write(f"- Next auto-scan in: {time_to_next} seconds")
-                    else:
-                        st.warning("Market is closed. Auto-execution will resume when market opens (9:15 AM - 3:30 PM).")
+                    st.info("No open positions")
+            
+                # Performance stats
+                st.subheader("Performance Statistics")
+                perf = trader.get_performance_stats()
+            
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total Trades", perf['total_trades'])
+                with col2:
+                    st.metric("Win Rate", f"{perf['win_rate']:.1%}")
+                with col3:
+                    st.metric("Total P&L", f"₹{perf['total_pnl']:+.2f}")
+                with col4:
+                    st.metric("Open P&L", f"₹{perf['open_pnl']:+.2f}")
     
-        # Tab 3: Paper Trading
-        with tabs[2]:
-            st.subheader("💰 Paper Trading")
+            # Tab 4: Trade History
+        except Exception as _tab_e:
+            with tabs[2]:
+                st.error(f"Error rendering 'Paper Trading' tab: {_tab_e}")
+                st.code(traceback.format_exc())
+        try:
+            with tabs[3]:
+                st.subheader("📋 Trade History")
             
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                symbol = st.selectbox("Symbol", NIFTY_50[:20], key="paper_symbol_select")
-            with col2:
-                action = st.selectbox("Action", ["BUY", "SELL"], key="paper_action_select")
-            with col3:
-                quantity = st.number_input("Quantity", min_value=1, value=10, key="paper_qty_input")
-            with col4:
-                strategy = st.selectbox("Strategy", ["Manual"] + [config["name"] for config in TRADING_STRATEGIES.values()], key="paper_strategy_select")
+                if SQLALCHEMY_AVAILABLE and trader.data_manager.database.connected:
+                    st.success("✅ Database connected - trades are being stored")
+                else:
+                    st.warning("⚠️ Database not available - showing recent trades only")
             
-            if st.button("Execute Paper Trade", type="primary", key="paper_execute_btn"):
-                try:
-                    data = data_manager.get_stock_data(symbol, "15m")
-                    price = float(data["Close"].iloc[-1])
-                    
-                    # Calculate support/resistance, ATR for stop loss/target
-                    atr = float(data["ATR"].iloc[-1]) if 'ATR' in data.columns else price * 0.01
-                    support, resistance = trader.calculate_support_resistance(symbol, price)
-                    
-                    # Calculate stop loss and target using IMPROVED method
-                    target, stop_loss = trader.calculate_improved_stop_target(
-                        price, action, atr, price, support, resistance
-                    )
-                    
-                    # Get strategy key
-                    strategy_key = "Manual"
-                    for key, config in TRADING_STRATEGIES.items():
-                        if config["name"] == strategy:
-                            strategy_key = key
-                            break
-                    
-                    # Execute the trade
-                    success, msg = trader.execute_trade(
-                        symbol=symbol,
-                        action=action,
-                        quantity=quantity,
-                        price=price,
-                        stop_loss=stop_loss,
-                        target=target,
-                        win_probability=0.75,
-                        auto_trade=False,
-                        strategy=strategy_key
-                    )
-                    
-                    if success:
-                        st.success(f"✅ {msg}")
-                        st.success(f"Stop Loss: ₹{stop_loss:.2f} | Target: ₹{target:.2f} | R:R: {(abs(target-price)/abs(price-stop_loss)):.2f}:1")
-                        st.rerun()
-                    else:
-                        st.error(f"❌ {msg}")
-                        
-                except Exception as e:
-                    st.error(f"Trade execution failed: {str(e)}")
-            
-            # Show current positions
-            st.subheader("Current Positions")
-            positions_df = trader.get_open_positions_data()
-            if positions_df:
-                # Create a better display with action buttons
-                for idx, pos in enumerate(positions_df):
-                    col1, col2, col3 = st.columns([3, 1, 1])
-                    with col1:
-                        action_color = "🟢" if pos['Action'] == 'BUY' else "🔴"
-                        pnl_text = pos['P&L']
-                        pnl_value = float(pnl_text.replace('₹', '').replace('+', '').replace(',', ''))
-                        pnl_color = "green" if pnl_value >= 0 else "red"
-                        
+                trade_history = trader.get_trade_history_data()
+                if trade_history:
+                    # Create DataFrame for display
+                    df_history = pd.DataFrame(trade_history)
+                
+                    # Display with HTML formatting
+                    for _, trade in df_history.iterrows():
                         st.markdown(f"""
-                        <div style="padding: 10px; border-left: 4px solid {'#059669' if pos['Action'] == 'BUY' else '#dc2626'}; 
-                                 background: linear-gradient(135deg, {'#d1fae5' if pos['Action'] == 'BUY' else '#fee2e2'} 0%, 
-                                 {'#a7f3d0' if pos['Action'] == 'BUY' else '#fecaca'} 100%); border-radius: 8px;">
-                            <strong>{action_color} {pos['Symbol']}</strong> | {pos['Action']} | Qty: {pos['Quantity']}<br>
-                            Entry: {pos['Entry Price']} | Current: {pos['Current Price']}<br>
-                            <span style="color: {pnl_color}">{pnl_text}</span> | {pos['Variance %']}
+                        <div class="{trade.get('_row_class', '')}">
+                            <div style="padding: 10px;">
+                                <strong>{trade['Symbol']}</strong> | {trade['Action']} | Qty: {trade['Quantity']}<br>
+                                Entry: {trade['Entry Price']} | Exit: {trade['Exit Price']} | {trade['P&L']}<br>
+                                Duration: {trade['Duration']} | Strategy: {trade['Strategy']}
+                            </div>
                         </div>
                         """, unsafe_allow_html=True)
-                    
-                    with col2:
-                        st.write(f"SL: {pos['Stop Loss']}")
-                        st.write(f"TG: {pos['Target']}")
-                    
-                    with col3:
-                        if st.button(f"Close", key=f"close_{pos['Symbol']}_{idx}", type="secondary"):
-                            success, msg = trader.close_position(f"{pos['Symbol']}.NS")
-                            if success:
-                                st.success(msg)
-                                st.rerun()
+                else:
+                    st.info("No trade history available")
+    
+            # Tab 5: RSI Extreme
+        except Exception as _tab_e:
+            with tabs[3]:
+                st.error(f"Error rendering 'Trade History' tab: {_tab_e}")
+                st.code(traceback.format_exc())
+        try:
+            with tabs[4]:
+                st.subheader("📉 RSI Extreme Scanner")
+            
+                st.info("This scanner finds stocks with extreme RSI values (oversold/overbought)")
+            
+                if st.button("Scan for RSI Extremes", key="rsi_scan_btn"):
+                    with st.spinner("Scanning for RSI extremes..."):
+                        try:
+                            oversold = []
+                            overbought = []
+                        
+                            # Scan top 30 stocks for performance
+                            for symbol in NIFTY_50[:30]:
+                                data = data_manager.get_stock_data(symbol, "15m")
+                                if len(data) > 0:
+                                    rsi_val = (data['RSI14'].iloc[-1] if 'RSI14' in data and data['RSI14'].dropna().shape[0] > 0 else 50.0)
+                                    price = data['Close'].iloc[-1]
+                                
+                                    if rsi_val < 30:
+                                        oversold.append({
+                                            "Symbol": symbol.replace(".NS", ""),
+                                            "RSI": round(rsi_val, 2),
+                                            "Price": round(price, 2),
+                                            "Signal": "OVERSOLD"
+                                        })
+                                    elif rsi_val > 70:
+                                        overbought.append({
+                                            "Symbol": symbol.replace(".NS", ""),
+                                            "RSI": round(rsi_val, 2),
+                                            "Price": round(price, 2),
+                                            "Signal": "OVERBOUGHT"
+                                        })
+                        
+                            if oversold or overbought:
+                                st.success(f"Found {len(oversold)} oversold and {len(overbought)} overbought stocks")
+                            
+                                if oversold:
+                                    st.subheader("🔵 Oversold Stocks (RSI < 30)")
+                                    df_oversold = pd.DataFrame(oversold)
+                                    st.dataframe(df_oversold, width='stretch')
+                            
+                                if overbought:
+                                    st.subheader("🔴 Overbought Stocks (RSI > 70)")
+                                    df_overbought = pd.DataFrame(overbought)
+                                    st.dataframe(df_overbought, width='stretch')
                             else:
-                                st.error(msg)
-                
-                st.dataframe(pd.DataFrame(positions_df), width='stretch')
-            else:
-                st.info("No open positions")
-            
-            # Performance stats
-            st.subheader("Performance Statistics")
-            perf = trader.get_performance_stats()
-            
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Total Trades", perf['total_trades'])
-            with col2:
-                st.metric("Win Rate", f"{perf['win_rate']:.1%}")
-            with col3:
-                st.metric("Total P&L", f"₹{perf['total_pnl']:+.2f}")
-            with col4:
-                st.metric("Open P&L", f"₹{perf['open_pnl']:+.2f}")
+                                st.info("No extreme RSI stocks found")
+                            
+                        except Exception as e:
+                            st.error(f"Error scanning RSI extremes: {str(e)}")
     
-        # Tab 4: Trade History
-        with tabs[3]:
-            st.subheader("📋 Trade History")
+            # Tab 6: Backtest
+        except Exception as _tab_e:
+            with tabs[4]:
+                st.error(f"Error rendering 'RSI Extreme' tab: {_tab_e}")
+                st.code(traceback.format_exc())
+        try:
+            with tabs[5]:
+                st.subheader("🔍 Strategy Backtesting")
             
-            if SQLALCHEMY_AVAILABLE and trader.data_manager.database.connected:
-                st.success("✅ Database connected - trades are being stored")
-            else:
-                st.warning("⚠️ Database not available - showing recent trades only")
+                st.info("This feature requires more complex backtesting implementation. Currently showing strategy performance.")
             
-            trade_history = trader.get_trade_history_data()
-            if trade_history:
-                # Create DataFrame for display
-                df_history = pd.DataFrame(trade_history)
-                
-                # Display with HTML formatting
-                for _, trade in df_history.iterrows():
-                    st.markdown(f"""
-                    <div class="{trade.get('_row_class', '')}">
-                        <div style="padding: 10px;">
-                            <strong>{trade['Symbol']}</strong> | {trade['Action']} | Qty: {trade['Quantity']}<br>
-                            Entry: {trade['Entry Price']} | Exit: {trade['Exit Price']} | {trade['P&L']}<br>
-                            Duration: {trade['Duration']} | Strategy: {trade['Strategy']}
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-            else:
-                st.info("No trade history available")
+                # Show strategy performance
+                strategy_perf = []
+                for strategy, config in {**TRADING_STRATEGIES, **HIGH_ACCURACY_STRATEGIES}.items():
+                    if strategy in trader.strategy_performance:
+                        perf = trader.strategy_performance[strategy]
+                        if perf["trades"] > 0:
+                            win_rate = perf["wins"] / perf["trades"]
+                            strategy_perf.append({
+                                "Strategy": config["name"],
+                                "Type": config["type"],
+                                "Trades": perf["trades"],
+                                "Wins": perf["wins"],
+                                "Win Rate": f"{win_rate:.1%}",
+                                "Total P&L": f"₹{perf['pnl']:+.2f}",
+                                "Avg P&L/Trade": f"₹{perf['pnl']/perf['trades']:.2f}" if perf["trades"] > 0 else "₹0.00"
+                            })
+            
+                if strategy_perf:
+                    st.dataframe(pd.DataFrame(strategy_perf), width='stretch')
+                else:
+                    st.info("No backtest data available yet")
     
-        # Tab 5: RSI Extreme
-        with tabs[4]:
-            st.subheader("📉 RSI Extreme Scanner")
+            # Tab 7: Strategies
+        except Exception as _tab_e:
+            with tabs[5]:
+                st.error(f"Error rendering 'Backtest' tab: {_tab_e}")
+                st.code(traceback.format_exc())
+        try:
+            with tabs[6]:
+                st.subheader("⚡ Trading Strategies")
             
-            st.info("This scanner finds stocks with extreme RSI values (oversold/overbought)")
+                st.write("### High Accuracy Strategies")
+                for strategy, config in HIGH_ACCURACY_STRATEGIES.items():
+                    with st.expander(f"🔥 {config['name']}"):
+                        st.write(f"**Type:** {config['type']}")
+                        st.write(f"**Weight:** {config['weight']}")
+                        st.write("**Description:** High probability setup with multiple confirmations")
             
-            if st.button("Scan for RSI Extremes", key="rsi_scan_btn"):
-                with st.spinner("Scanning for RSI extremes..."):
+                st.write("### Standard Strategies")
+                for strategy, config in TRADING_STRATEGIES.items():
+                    with st.expander(f"{config['name']}"):
+                        st.write(f"**Type:** {config['type']}")
+                        st.write(f"**Weight:** {config['weight']}")
+                        st.write("**Description:** Standard trading strategy")
+    
+            # Tab 8: High Accuracy Scanner
+        except Exception as _tab_e:
+            with tabs[6]:
+                st.error(f"Error rendering 'Strategies' tab: {_tab_e}")
+                st.code(traceback.format_exc())
+        try:
+            with tabs[7]:
+                st.subheader("🎯 High Accuracy Scanner - All Stocks")
+                st.markdown(f"""
+                <div class="alert-success">
+                    <strong>🔥 High Accuracy Strategies Enabled:</strong> 
+                    Scanning <strong>{universe}</strong> with enhanced high-accuracy strategies including
+                    Multi-Confirmation, Volume Breakouts, RSI Divergence, and MACD Trend Momentum.
+                    These strategies focus on volume confirmation, multi-timeframe alignment, 
+                    and divergence patterns for higher probability trades.
+                </div>
+                """, unsafe_allow_html=True)
+            
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    high_acc_scan_btn = st.button("🚀 Scan High Accuracy", type="primary", width='stretch', key="high_acc_scan_btn")
+                with col2:
+                    min_high_acc_confidence = st.slider("Min Confidence", 65, 85, 70, 5, key="high_acc_conf_slider")  # CHANGED: 70-90 → 65-85
+                with col3:
+                    min_high_acc_score = st.slider("Min Score", 5, 8, 6, 1, key="high_acc_score_slider")  # CHANGED: 6-10 → 5-8
+            
+                if high_acc_scan_btn:
+                    with st.spinner(f"Scanning {universe} with high-accuracy strategies..."):
+                        high_acc_signals = trader.generate_quality_signals(
+                            universe, 
+                            max_scan=50 if universe == "All Stocks" else max_scan,
+                            min_confidence=min_high_acc_confidence/100.0,
+                            min_score=min_high_acc_score,
+                            use_high_accuracy=True
+                        )
+                
+                    if high_acc_signals:
+                        st.success(f"🎯 Found {len(high_acc_signals)} high-confidence signals!")
+                    
+                        # Display high accuracy signals with special styling
+                        for idx, signal in enumerate(high_acc_signals[:10]):  # Show first 10
+                            quality_score = signal.get('quality_score', 0)
+                            if quality_score >= 80:
+                                quality_class = "high-quality-signal"
+                            elif quality_score >= 60:
+                                quality_class = "medium-quality-signal"
+                            else:
+                                quality_class = "low-quality-signal"
+                        
+                            with st.container():
+                                st.markdown(f"""
+                                <div class="{quality_class}">
+                                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                                        <div>
+                                            <strong>{signal['symbol'].replace('.NS', '')}</strong> | 
+                                            <span style="color: {'#ffffff' if signal['action'] == 'BUY' else '#ffffff'}">
+                                                {signal['action']}
+                                            </span> | 
+                                            ₹{signal['entry']:.2f}
+                                        </div>
+                                        <div>
+                                            <span style="background: #f59e0b; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px;">
+                                                {signal['strategy_name']}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div style="font-size: 12px; margin-top: 5px;">
+                                        Target: ₹{signal['target']:.2f} | SL: ₹{signal['stop_loss']:.2f} | 
+                                        R:R: {signal['risk_reward']:.2f} | Quality: {quality_score}/100
+                                    </div>
+                                    <div style="font-size: 11px; margin-top: 3px;">
+                                        Volume: {signal.get('volume_ratio', 1):.1f}x | Confidence: {signal['confidence']:.1%}
+                                    </div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                    # Quick execution buttons for high accuracy signals
+                    if "high_acc_signals" in locals() and high_acc_signals:
+                        st.subheader("Quick Execution")
+                        exec_cols = st.columns(3)
+                        for idx, signal in enumerate(high_acc_signals[:6]):
+                            with exec_cols[idx % 3]:
+                                import uuid
+                                unique_key = f"high_acc_exec_{signal['symbol']}_{idx}_{str(uuid.uuid4())[:8]}"
+                                if st.button(
+                                    f"{signal['action']} {signal['symbol'].replace('.NS', '')}",
+                                    key=unique_key, use_container_width=True
+                                ):
+                                    try:
+                                        data15 = trader.data_manager.get_stock_data(signal["symbol"], "15m")
+                                        atr_val = data15["ATR"].iloc[-1] if "ATR" in data15.columns else signal["entry"] * 0.01
+                                    except Exception:
+                                        atr_val = signal["entry"] * 0.01
+                                    qty = trader.data_manager.calculate_optimal_position_size(
+                                        signal["symbol"], signal.get("win_probability", 0.75), signal.get("risk_reward", 2.0),
+                                        trader.cash, signal["entry"], atr_val, stop_loss=signal.get("stop_loss")
+                                    )
+                                    success, msg = trader.execute_trade(
+                                        symbol=signal["symbol"], action=signal["action"], quantity=qty, price=signal["entry"],
+                                        stop_loss=signal.get("stop_loss"), target=signal.get("target"),
+                                        win_probability=signal.get("win_probability", 0.75), strategy=signal.get("strategy"),
+                                        is_demo_data=signal.get("is_demo", False)
+                                    )
+                                    if success:
+                                        st.success(msg)
+                                        st.rerun()
+    
+        # Tab 9: Kite Live Charts (NEW TAB)
+        except Exception as _tab_e:
+            with tabs[7]:
+                st.error(f"Error rendering 'High Accuracy Scanner' tab: {_tab_e}")
+                st.code(traceback.format_exc())
+        try:
+            with tabs[8]:
+                st.subheader("📈 Kite Connect Live Charts")
+            
+                # Check Kite authentication status
+                if not KITECONNECT_AVAILABLE:
+                    st.error("❌ Kite Connect library not available. Please install: pip install kiteconnect")
+                    st.stop()
+            
+                if not data_manager.kite_manager.is_authenticated:
+                    st.warning("⚠️ Kite Connect not authenticated. Please authenticate in the sidebar.")
+                    st.stop()
+            
+                # Simple chart interface
+                st.info("🎯 Kite Connect Live Charts - Real-time NSE data")
+            
+                col1, col2 = st.columns(2)
+                with col1:
+                    selected_index = st.selectbox("Select Index", ["NIFTY 50", "BANKNIFTY", "FINNIFTY"], key="kite_index_select")
+                with col2:
+                    interval = st.selectbox("Interval", ["minute", "5minute", "15minute", "30minute", "hour"], key="kite_interval_select")
+            
+                days_back = st.slider("Days Back", 1, 30, 7, key="kite_days_slider")
+            
+                if st.button("📊 Load Chart", type="primary", key="load_kite_chart_btn"):
                     try:
-                        oversold = []
-                        overbought = []
-                        
-                        # Scan top 30 stocks for performance
-                        for symbol in NIFTY_50[:30]:
-                            data = data_manager.get_stock_data(symbol, "15m")
-                            if len(data) > 0:
-                                rsi_val = (data['RSI14'].iloc[-1] if 'RSI14' in data and data['RSI14'].dropna().shape[0] > 0 else 50.0)
-                                price = data['Close'].iloc[-1]
+                        # Map symbols to NSE tokens (approximate - may need actual instrument tokens)
+                        token_map = {
+                            "NIFTY 50": 256265,
+                            "BANKNIFTY": 260105,
+                            "FINNIFTY": 257801
+                        }
+                    
+                        token = token_map.get(selected_index)
+                        if token:
+                            with st.spinner(f"Fetching data for {selected_index}..."):
+                                # Get historical data
+                                from_date = datetime.now().date() - pd.Timedelta(days=days_back)
+                                to_date = datetime.now().date()
+                            
+                                data = data_manager.kite_manager.get_live_data(token, interval, from_date, to_date)
+                            
+                                if data is not None and len(data) > 0:
+                                    # Create candlestick chart
+                                    fig = go.Figure(data=[go.Candlestick(
+                                        x=data.index,
+                                        open=data['open'],
+                                        high=data['high'],
+                                        low=data['low'],
+                                        close=data['close'],
+                                        name='Price'
+                                    )])
                                 
-                                if rsi_val < 30:
-                                    oversold.append({
-                                        "Symbol": symbol.replace(".NS", ""),
-                                        "RSI": round(rsi_val, 2),
-                                        "Price": round(price, 2),
-                                        "Signal": "OVERSOLD"
-                                    })
-                                elif rsi_val > 70:
-                                    overbought.append({
-                                        "Symbol": symbol.replace(".NS", ""),
-                                        "RSI": round(rsi_val, 2),
-                                        "Price": round(price, 2),
-                                        "Signal": "OVERBOUGHT"
-                                    })
-                        
-                        if oversold or overbought:
-                            st.success(f"Found {len(oversold)} oversold and {len(overbought)} overbought stocks")
-                            
-                            if oversold:
-                                st.subheader("🔵 Oversold Stocks (RSI < 30)")
-                                df_oversold = pd.DataFrame(oversold)
-                                st.dataframe(df_oversold, width='stretch')
-                            
-                            if overbought:
-                                st.subheader("🔴 Overbought Stocks (RSI > 70)")
-                                df_overbought = pd.DataFrame(overbought)
-                                st.dataframe(df_overbought, width='stretch')
+                                    # Add EMAs
+                                    data['EMA20'] = ema(data['close'], 20)
+                                    data['EMA50'] = ema(data['close'], 50)
+                                
+                                    fig.add_trace(go.Scatter(
+                                        x=data.index,
+                                        y=data['EMA20'],
+                                        mode='lines',
+                                        name='EMA20',
+                                        line=dict(color='orange', width=1)
+                                    ))
+                                
+                                    fig.add_trace(go.Scatter(
+                                        x=data.index,
+                                        y=data['EMA50'],
+                                        mode='lines',
+                                        name='EMA50',
+                                        line=dict(color='blue', width=1)
+                                    ))
+                                
+                                    fig.update_layout(
+                                        title=f'{selected_index} Live Chart',
+                                        xaxis_title='Time',
+                                        yaxis_title='Price',
+                                        height=600,
+                                        template='plotly_dark',
+                                        showlegend=True
+                                    )
+                                
+                                    st.plotly_chart(fig, use_container_width=True)
+                                
+                                    # Show current stats
+                                    current_price = data['close'].iloc[-1]
+                                    prev_close = data['close'].iloc[-2] if len(data) > 1 else current_price
+                                    change = current_price - prev_close
+                                    change_percent = (change / prev_close) * 100
+                                
+                                    cols = st.columns(4)
+                                    cols[0].metric("Current Price", f"₹{current_price:.2f}")
+                                    cols[1].metric("Change", f"₹{change:+.2f}")
+                                    cols[2].metric("Change %", f"{change_percent:+.2f}%")
+                                    cols[3].metric("Volume", f"{data['volume'].iloc[-1]:,.0f}")
+                                else:
+                                    st.error("❌ Could not fetch data. Check Kite Connect permissions.")
                         else:
-                            st.info("No extreme RSI stocks found")
-                            
+                            st.error("Invalid index selection")
+                        
                     except Exception as e:
-                        st.error(f"Error scanning RSI extremes: {str(e)}")
-    
-        # Tab 6: Backtest
-        with tabs[5]:
-            st.subheader("🔍 Strategy Backtesting")
-            
-            st.info("This feature requires more complex backtesting implementation. Currently showing strategy performance.")
-            
-            # Show strategy performance
-            strategy_perf = []
-            for strategy, config in {**TRADING_STRATEGIES, **HIGH_ACCURACY_STRATEGIES}.items():
-                if strategy in trader.strategy_performance:
-                    perf = trader.strategy_performance[strategy]
-                    if perf["trades"] > 0:
-                        win_rate = perf["wins"] / perf["trades"]
-                        strategy_perf.append({
-                            "Strategy": config["name"],
-                            "Type": config["type"],
-                            "Trades": perf["trades"],
-                            "Wins": perf["wins"],
-                            "Win Rate": f"{win_rate:.1%}",
-                            "Total P&L": f"₹{perf['pnl']:+.2f}",
-                            "Avg P&L/Trade": f"₹{perf['pnl']/perf['trades']:.2f}" if perf["trades"] > 0 else "₹0.00"
-                        })
-            
-            if strategy_perf:
-                st.dataframe(pd.DataFrame(strategy_perf), width='stretch')
-            else:
-                st.info("No backtest data available yet")
-    
-        # Tab 7: Strategies
-        with tabs[6]:
-            st.subheader("⚡ Trading Strategies")
-            
-            st.write("### High Accuracy Strategies")
-            for strategy, config in HIGH_ACCURACY_STRATEGIES.items():
-                with st.expander(f"🔥 {config['name']}"):
-                    st.write(f"**Type:** {config['type']}")
-                    st.write(f"**Weight:** {config['weight']}")
-                    st.write("**Description:** High probability setup with multiple confirmations")
-            
-            st.write("### Standard Strategies")
-            for strategy, config in TRADING_STRATEGIES.items():
-                with st.expander(f"{config['name']}"):
-                    st.write(f"**Type:** {config['type']}")
-                    st.write(f"**Weight:** {config['weight']}")
-                    st.write("**Description:** Standard trading strategy")
-    
-        # Tab 8: High Accuracy Scanner
-        with tabs[7]:
-            st.subheader("🎯 High Accuracy Scanner - All Stocks")
-            st.markdown(f"""
-            <div class="alert-success">
-                <strong>🔥 High Accuracy Strategies Enabled:</strong> 
-                Scanning <strong>{universe}</strong> with enhanced high-accuracy strategies including
-                Multi-Confirmation, Volume Breakouts, RSI Divergence, and MACD Trend Momentum.
-                These strategies focus on volume confirmation, multi-timeframe alignment, 
-                and divergence patterns for higher probability trades.
-            </div>
-            """, unsafe_allow_html=True)
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                high_acc_scan_btn = st.button("🚀 Scan High Accuracy", type="primary", width='stretch', key="high_acc_scan_btn")
-            with col2:
-                min_high_acc_confidence = st.slider("Min Confidence", 65, 85, 70, 5, key="high_acc_conf_slider")  # CHANGED: 70-90 → 65-85
-            with col3:
-                min_high_acc_score = st.slider("Min Score", 5, 8, 6, 1, key="high_acc_score_slider")  # CHANGED: 6-10 → 5-8
-            
-            if high_acc_scan_btn:
-                with st.spinner(f"Scanning {universe} with high-accuracy strategies..."):
-                    high_acc_signals = trader.generate_quality_signals(
-                        universe, 
-                        max_scan=50 if universe == "All Stocks" else max_scan,
-                        min_confidence=min_high_acc_confidence/100.0,
-                        min_score=min_high_acc_score,
-                        use_high_accuracy=True
-                    )
-                
-                if high_acc_signals:
-                    st.success(f"🎯 Found {len(high_acc_signals)} high-confidence signals!")
-                    
-                    # Display high accuracy signals with special styling
-                    for idx, signal in enumerate(high_acc_signals[:10]):  # Show first 10
-                        quality_score = signal.get('quality_score', 0)
-                        if quality_score >= 80:
-                            quality_class = "high-quality-signal"
-                        elif quality_score >= 60:
-                            quality_class = "medium-quality-signal"
-                        else:
-                            quality_class = "low-quality-signal"
-                        
-                        with st.container():
-                            st.markdown(f"""
-                            <div class="{quality_class}">
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <div>
-                                        <strong>{signal['symbol'].replace('.NS', '')}</strong> | 
-                                        <span style="color: {'#ffffff' if signal['action'] == 'BUY' else '#ffffff'}">
-                                            {signal['action']}
-                                        </span> | 
-                                        ₹{signal['entry']:.2f}
-                                    </div>
-                                    <div>
-                                        <span style="background: #f59e0b; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px;">
-                                            {signal['strategy_name']}
-                                        </span>
-                                    </div>
-                                </div>
-                                <div style="font-size: 12px; margin-top: 5px;">
-                                    Target: ₹{signal['target']:.2f} | SL: ₹{signal['stop_loss']:.2f} | 
-                                    R:R: {signal['risk_reward']:.2f} | Quality: {quality_score}/100
-                                </div>
-                                <div style="font-size: 11px; margin-top: 3px;">
-                                    Volume: {signal.get('volume_ratio', 1):.1f}x | Confidence: {signal['confidence']:.1%}
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                # Quick execution buttons for high accuracy signals
-                if "high_acc_signals" in locals() and high_acc_signals:
-                    st.subheader("Quick Execution")
-                    exec_cols = st.columns(3)
-                    for idx, signal in enumerate(high_acc_signals[:6]):
-                        with exec_cols[idx % 3]:
-                            import uuid
-                            unique_key = f"high_acc_exec_{signal['symbol']}_{idx}_{str(uuid.uuid4())[:8]}"
-                            if st.button(
-                                f"{signal['action']} {signal['symbol'].replace('.NS', '')}",
-                                key=unique_key, use_container_width=True
-                            ):
-                                try:
-                                    data15 = trader.data_manager.get_stock_data(signal["symbol"], "15m")
-                                    atr_val = data15["ATR"].iloc[-1] if "ATR" in data15.columns else signal["entry"] * 0.01
-                                except Exception:
-                                    atr_val = signal["entry"] * 0.01
-                                qty = trader.data_manager.calculate_optimal_position_size(
-                                    signal["symbol"], signal.get("win_probability", 0.75), signal.get("risk_reward", 2.0),
-                                    trader.cash, signal["entry"], atr_val, stop_loss=signal.get("stop_loss")
-                                )
-                                success, msg = trader.execute_trade(
-                                    symbol=signal["symbol"], action=signal["action"], quantity=qty, price=signal["entry"],
-                                    stop_loss=signal.get("stop_loss"), target=signal.get("target"),
-                                    win_probability=signal.get("win_probability", 0.75), strategy=signal.get("strategy"),
-                                    is_demo_data=signal.get("is_demo", False)
-                                )
-                                if success:
-                                    st.success(msg)
-                                    st.rerun()
-    
-    # Tab 9: Kite Live Charts (NEW TAB)
-        with tabs[8]:
-            st.subheader("📈 Kite Connect Live Charts")
-            
-            # Check Kite authentication status
-            if not KITECONNECT_AVAILABLE:
-                st.error("❌ Kite Connect library not available. Please install: pip install kiteconnect")
-                st.stop()
-            
-            if not data_manager.kite_manager.is_authenticated:
-                st.warning("⚠️ Kite Connect not authenticated. Please authenticate in the sidebar.")
-                st.stop()
-            
-            # Simple chart interface
-            st.info("🎯 Kite Connect Live Charts - Real-time NSE data")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                selected_index = st.selectbox("Select Index", ["NIFTY 50", "BANKNIFTY", "FINNIFTY"], key="kite_index_select")
-            with col2:
-                interval = st.selectbox("Interval", ["minute", "5minute", "15minute", "30minute", "hour"], key="kite_interval_select")
-            
-            days_back = st.slider("Days Back", 1, 30, 7, key="kite_days_slider")
-            
-            if st.button("📊 Load Chart", type="primary", key="load_kite_chart_btn"):
+                        st.error(f"Error loading chart: {str(e)}")
+                        st.info("Note: Kite Connect requires proper authentication and API permissions.")
+
+            # Tab 10: Market Footprint & Volume Profile
+        except Exception as _tab_e:
+            with tabs[8]:
+                st.error(f"Error rendering 'Kite Live Charts' tab: {_tab_e}")
+                st.code(traceback.format_exc())
+        try:
+            with tabs[9]:
+                st.subheader("🩻 Market Footprint & Volume Profile")
+                st.caption("Volume Profile shows where the most volume traded by price. "
+                           "Footprint is an OHLCV-based buy/sell pressure proxy (no tick-level bid/ask data is available from this data source).")
+
+                fp_col1, fp_col2, fp_col3 = st.columns(3)
+                with fp_col1:
+                    fp_symbol = st.selectbox("Symbol", NIFTY_50[:30], key="fp_symbol_select")
+                with fp_col2:
+                    fp_interval = st.selectbox("Interval", ["5m", "15m", "1m"], index=1, key="fp_interval_select")
+                with fp_col3:
+                    fp_bins = st.slider("Profile Bins", 10, 50, 24, key="fp_bins_slider")
+
                 try:
-                    # Map symbols to NSE tokens (approximate - may need actual instrument tokens)
-                    token_map = {
-                        "NIFTY 50": 256265,
-                        "BANKNIFTY": 260105,
-                        "FINNIFTY": 257801
-                    }
-                    
-                    token = token_map.get(selected_index)
-                    if token:
-                        with st.spinner(f"Fetching data for {selected_index}..."):
-                            # Get historical data
-                            from_date = datetime.now().date() - pd.Timedelta(days=days_back)
-                            to_date = datetime.now().date()
-                            
-                            data = data_manager.kite_manager.get_live_data(token, interval, from_date, to_date)
-                            
-                            if data is not None and len(data) > 0:
-                                # Create candlestick chart
-                                fig = go.Figure(data=[go.Candlestick(
-                                    x=data.index,
-                                    open=data['open'],
-                                    high=data['high'],
-                                    low=data['low'],
-                                    close=data['close'],
-                                    name='Price'
-                                )])
-                                
-                                # Add EMAs
-                                data['EMA20'] = ema(data['close'], 20)
-                                data['EMA50'] = ema(data['close'], 50)
-                                
-                                fig.add_trace(go.Scatter(
-                                    x=data.index,
-                                    y=data['EMA20'],
-                                    mode='lines',
-                                    name='EMA20',
-                                    line=dict(color='orange', width=1)
-                                ))
-                                
-                                fig.add_trace(go.Scatter(
-                                    x=data.index,
-                                    y=data['EMA50'],
-                                    mode='lines',
-                                    name='EMA50',
-                                    line=dict(color='blue', width=1)
-                                ))
-                                
-                                fig.update_layout(
-                                    title=f'{selected_index} Live Chart',
-                                    xaxis_title='Time',
-                                    yaxis_title='Price',
-                                    height=600,
-                                    template='plotly_dark',
-                                    showlegend=True
-                                )
-                                
-                                st.plotly_chart(fig, use_container_width=True)
-                                
-                                # Show current stats
-                                current_price = data['close'].iloc[-1]
-                                prev_close = data['close'].iloc[-2] if len(data) > 1 else current_price
-                                change = current_price - prev_close
-                                change_percent = (change / prev_close) * 100
-                                
-                                cols = st.columns(4)
-                                cols[0].metric("Current Price", f"₹{current_price:.2f}")
-                                cols[1].metric("Change", f"₹{change:+.2f}")
-                                cols[2].metric("Change %", f"{change_percent:+.2f}%")
-                                cols[3].metric("Volume", f"{data['volume'].iloc[-1]:,.0f}")
-                            else:
-                                st.error("❌ Could not fetch data. Check Kite Connect permissions.")
+                    fp_data = data_manager.get_stock_data(fp_symbol, fp_interval)
+
+                    if fp_data is not None and len(fp_data) > 0:
+                        if fp_data.attrs.get("is_demo"):
+                            st.warning(f"⚠️ Live data for {fp_symbol} is unavailable right now (Yahoo Finance may be "
+                                       "rate-limiting this server) — the chart below uses simulated placeholder data, "
+                                       "not real prices/volume.")
+                        profile = calculate_market_profile_vectorized(
+                            fp_data["High"], fp_data["Low"], fp_data["Close"], fp_data["Volume"], bins=fp_bins
+                        )
+                        current_price = float(fp_data["Close"].iloc[-1])
+
+                        m1, m2, m3, m4 = st.columns(4)
+                        m1.metric("Current Price", f"₹{current_price:,.2f}")
+                        m2.metric("POC (Point of Control)", f"₹{profile['poc']:,.2f}")
+                        m3.metric("Value Area High", f"₹{profile['value_area_high']:,.2f}")
+                        m4.metric("Value Area Low", f"₹{profile['value_area_low']:,.2f}")
+
+                        if profile['value_area_low'] <= current_price <= profile['value_area_high']:
+                            st.success("📍 Price is trading INSIDE the Value Area (balanced / fair value)")
+                        elif current_price > profile['value_area_high']:
+                            st.info("⬆️ Price is trading ABOVE the Value Area (potential premium / trend up)")
+                        else:
+                            st.info("⬇️ Price is trading BELOW the Value Area (potential discount / trend down)")
+
+                        # Volume Profile chart (horizontal bars) alongside price
+                        vp_fig = make_subplots(
+                            rows=1, cols=2, column_widths=[0.72, 0.28], shared_yaxes=True,
+                            horizontal_spacing=0.02,
+                            subplot_titles=("Price", "Volume Profile")
+                        )
+                        vp_fig.add_trace(go.Candlestick(
+                            x=fp_data.index, open=fp_data["Open"], high=fp_data["High"],
+                            low=fp_data["Low"], close=fp_data["Close"], name="Price"
+                        ), row=1, col=1)
+
+                        prices = [p["price"] for p in profile["profile"]]
+                        vols = [p["volume"] for p in profile["profile"]]
+                        poc_idx = int(np.argmax(vols)) if vols else 0
+                        bar_colors = ["#f59e0b" if i == poc_idx else "#3b82f6" for i in range(len(vols))]
+                        vp_fig.add_trace(go.Bar(
+                            x=vols, y=prices, orientation="h", name="Volume",
+                            marker=dict(color=bar_colors), showlegend=False
+                        ), row=1, col=2)
+
+                        for label, level, dash in [
+                            ("POC", profile["poc"], "solid"),
+                            ("VAH", profile["value_area_high"], "dash"),
+                            ("VAL", profile["value_area_low"], "dash"),
+                        ]:
+                            vp_fig.add_hline(y=level, line_dash=dash, line_color="#f59e0b" if label == "POC" else "#9ca3af",
+                                             annotation_text=label, row=1, col=1)
+
+                        vp_fig.update_layout(
+                            height=550, template="plotly_dark", showlegend=False,
+                            xaxis_rangeslider_visible=False,
+                            title=f"{fp_symbol} — Volume Profile ({fp_interval})"
+                        )
+                        st.plotly_chart(vp_fig, use_container_width=True)
+
+                        st.divider()
+
+                        # Simplified Footprint (buy/sell pressure proxy per candle)
+                        st.subheader("📟 Candle Footprint (Buy/Sell Pressure Proxy)")
+                        fp_n = st.slider("Number of recent candles", 10, 50, 20, key="fp_candle_count")
+                        recent = fp_data.tail(fp_n).copy()
+                        rng = (recent["High"] - recent["Low"]).replace(0, np.nan)
+                        buy_ratio = ((recent["Close"] - recent["Low"]) / rng).fillna(0.5).clip(0, 1)
+                        recent["Est_Buy_Vol"] = (recent["Volume"] * buy_ratio).round(0)
+                        recent["Est_Sell_Vol"] = (recent["Volume"] * (1 - buy_ratio)).round(0)
+                        recent["Delta"] = recent["Est_Buy_Vol"] - recent["Est_Sell_Vol"]
+
+                        delta_colors = ["#059669" if d >= 0 else "#dc2626" for d in recent["Delta"]]
+                        delta_fig = go.Figure(go.Bar(
+                            x=recent.index, y=recent["Delta"], marker=dict(color=delta_colors), name="Delta"
+                        ))
+                        delta_fig.update_layout(
+                            height=280, template="plotly_dark",
+                            title="Estimated Buy/Sell Delta per Candle (green = buy pressure, red = sell pressure)"
+                        )
+                        st.plotly_chart(delta_fig, use_container_width=True)
+
+                        footprint_display = recent[["Open", "High", "Low", "Close", "Volume", "Est_Buy_Vol", "Est_Sell_Vol", "Delta"]].copy()
+                        footprint_display.index.name = "Time"
+                        st.dataframe(
+                            footprint_display.style.format({
+                                "Open": "{:.2f}", "High": "{:.2f}", "Low": "{:.2f}", "Close": "{:.2f}",
+                                "Volume": "{:,.0f}", "Est_Buy_Vol": "{:,.0f}", "Est_Sell_Vol": "{:,.0f}", "Delta": "{:+,.0f}"
+                            }).background_gradient(subset=["Delta"], cmap="RdYlGn"),
+                            width='stretch'
+                        )
+
+                        cum_delta = float(recent["Delta"].sum())
+                        st.metric("Cumulative Delta (session window)", f"{cum_delta:+,.0f}",
+                                  delta="Net Buying" if cum_delta >= 0 else "Net Selling")
+
+                        st.caption("⚠️ This footprint is a volume-weighted proxy derived from OHLCV bars (close position within each bar's range), "
+                                   "not true bid/ask executed-order footprint data. For genuine tick-by-tick footprint charts, a Level 2 / "
+                                   "tick data feed (e.g. via a broker API) would be required.")
                     else:
-                        st.error("Invalid index selection")
-                        
+                        st.error("Could not fetch data for footprint/profile analysis.")
                 except Exception as e:
-                    st.error(f"Error loading chart: {str(e)}")
-                    st.info("Note: Kite Connect requires proper authentication and API permissions.")
+                    st.error(f"Error building footprint/profile: {str(e)}")
 
-        # Tab 10: Market Footprint & Volume Profile
-        with tabs[9]:
-            st.subheader("🩻 Market Footprint & Volume Profile")
-            st.caption("Volume Profile shows where the most volume traded by price. "
-                       "Footprint is an OHLCV-based buy/sell pressure proxy (no tick-level bid/ask data is available from this data source).")
+            # Tab 11: Stock Analyze (16-Point Fundamental Checklist)
+        except Exception as _tab_e:
+            with tabs[9]:
+                st.error(f"Error rendering 'Footprint & Profile' tab: {_tab_e}")
+                st.code(traceback.format_exc())
+        try:
+            with tabs[10]:
+                st.subheader("🔍 How To Analyze Stocks — 16-Point Checklist")
+                st.caption("Fundamental research framework. Metrics are pulled live where available; "
+                           "purely qualitative items are shown as guiding questions for your own judgment.")
 
-            fp_col1, fp_col2, fp_col3 = st.columns(3)
-            with fp_col1:
-                fp_symbol = st.selectbox("Symbol", NIFTY_50[:30], key="fp_symbol_select")
-            with fp_col2:
-                fp_interval = st.selectbox("Interval", ["5m", "15m", "1m"], index=1, key="fp_interval_select")
-            with fp_col3:
-                fp_bins = st.slider("Profile Bins", 10, 50, 24, key="fp_bins_slider")
+                sa_symbol = st.selectbox("Symbol", NIFTY_50, key="sa_symbol_select")
 
-            try:
-                fp_data = data_manager.get_stock_data(fp_symbol, fp_interval)
+                with st.spinner(f"Pulling fundamentals for {sa_symbol}..."):
+                    sa_result = get_fundamental_analysis(sa_symbol)
 
-                if fp_data is not None and len(fp_data) > 0:
-                    if fp_data.attrs.get("is_demo"):
-                        st.warning(f"⚠️ Live data for {fp_symbol} is unavailable right now (Yahoo Finance may be "
-                                   "rate-limiting this server) — the chart below uses simulated placeholder data, "
-                                   "not real prices/volume.")
-                    profile = calculate_market_profile_vectorized(
-                        fp_data["High"], fp_data["Low"], fp_data["Close"], fp_data["Volume"], bins=fp_bins
-                    )
-                    current_price = float(fp_data["Close"].iloc[-1])
+                if not sa_result["ok"]:
+                    st.error(f"Could not fetch fundamental data: {sa_result.get('error', 'unknown error')}")
+                else:
+                    sections = sa_result["sections"]
+                    left_items = [f for f in STOCK_ANALYZE_FRAMEWORK if f["num"] % 2 == 1]
+                    right_items = [f for f in STOCK_ANALYZE_FRAMEWORK if f["num"] % 2 == 0]
+                    col_left, col_right = st.columns(2)
 
-                    m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("Current Price", f"₹{current_price:,.2f}")
-                    m2.metric("POC (Point of Control)", f"₹{profile['poc']:,.2f}")
-                    m3.metric("Value Area High", f"₹{profile['value_area_high']:,.2f}")
-                    m4.metric("Value Area Low", f"₹{profile['value_area_low']:,.2f}")
+                    def render_section(container, item):
+                        sec = sections.get(item["num"], {"metrics": []})
+                        with container.expander(f"{item['icon']} {item['num']}. {item['title']}", expanded=False):
+                            for label, value in sec["metrics"]:
+                                if label in ("Business Summary", "Note"):
+                                    st.write(f"**{label}:** {value}")
+                                else:
+                                    st.markdown(f"**{label}:** {value}")
+                            st.markdown("---")
+                            st.caption("Guiding questions:")
+                            for q in item["questions"]:
+                                st.markdown(f"- {q}")
 
-                    if profile['value_area_low'] <= current_price <= profile['value_area_high']:
-                        st.success("📍 Price is trading INSIDE the Value Area (balanced / fair value)")
-                    elif current_price > profile['value_area_high']:
-                        st.info("⬆️ Price is trading ABOVE the Value Area (potential premium / trend up)")
-                    else:
-                        st.info("⬇️ Price is trading BELOW the Value Area (potential discount / trend down)")
-
-                    # Volume Profile chart (horizontal bars) alongside price
-                    vp_fig = make_subplots(
-                        rows=1, cols=2, column_widths=[0.72, 0.28], shared_yaxes=True,
-                        horizontal_spacing=0.02,
-                        subplot_titles=("Price", "Volume Profile")
-                    )
-                    vp_fig.add_trace(go.Candlestick(
-                        x=fp_data.index, open=fp_data["Open"], high=fp_data["High"],
-                        low=fp_data["Low"], close=fp_data["Close"], name="Price"
-                    ), row=1, col=1)
-
-                    prices = [p["price"] for p in profile["profile"]]
-                    vols = [p["volume"] for p in profile["profile"]]
-                    poc_idx = int(np.argmax(vols)) if vols else 0
-                    bar_colors = ["#f59e0b" if i == poc_idx else "#3b82f6" for i in range(len(vols))]
-                    vp_fig.add_trace(go.Bar(
-                        x=vols, y=prices, orientation="h", name="Volume",
-                        marker=dict(color=bar_colors), showlegend=False
-                    ), row=1, col=2)
-
-                    for label, level, dash in [
-                        ("POC", profile["poc"], "solid"),
-                        ("VAH", profile["value_area_high"], "dash"),
-                        ("VAL", profile["value_area_low"], "dash"),
-                    ]:
-                        vp_fig.add_hline(y=level, line_dash=dash, line_color="#f59e0b" if label == "POC" else "#9ca3af",
-                                         annotation_text=label, row=1, col=1)
-
-                    vp_fig.update_layout(
-                        height=550, template="plotly_dark", showlegend=False,
-                        xaxis_rangeslider_visible=False,
-                        title=f"{fp_symbol} — Volume Profile ({fp_interval})"
-                    )
-                    st.plotly_chart(vp_fig, use_container_width=True)
+                    for item in left_items:
+                        render_section(col_left, item)
+                    for item in right_items:
+                        render_section(col_right, item)
 
                     st.divider()
+                    st.caption("⚠️ Data sourced via Yahoo Finance; coverage for NSE-listed companies (especially SBC, buyback history, "
+                               "and management detail) is often incomplete. Use this as a starting checklist, not a substitute for reading "
+                               "the annual report / investor presentation.")
 
-                    # Simplified Footprint (buy/sell pressure proxy per candle)
-                    st.subheader("📟 Candle Footprint (Buy/Sell Pressure Proxy)")
-                    fp_n = st.slider("Number of recent candles", 10, 50, 20, key="fp_candle_count")
-                    recent = fp_data.tail(fp_n).copy()
-                    rng = (recent["High"] - recent["Low"]).replace(0, np.nan)
-                    buy_ratio = ((recent["Close"] - recent["Low"]) / rng).fillna(0.5).clip(0, 1)
-                    recent["Est_Buy_Vol"] = (recent["Volume"] * buy_ratio).round(0)
-                    recent["Est_Sell_Vol"] = (recent["Volume"] * (1 - buy_ratio)).round(0)
-                    recent["Delta"] = recent["Est_Buy_Vol"] - recent["Est_Sell_Vol"]
-
-                    delta_colors = ["#059669" if d >= 0 else "#dc2626" for d in recent["Delta"]]
-                    delta_fig = go.Figure(go.Bar(
-                        x=recent.index, y=recent["Delta"], marker=dict(color=delta_colors), name="Delta"
-                    ))
-                    delta_fig.update_layout(
-                        height=280, template="plotly_dark",
-                        title="Estimated Buy/Sell Delta per Candle (green = buy pressure, red = sell pressure)"
-                    )
-                    st.plotly_chart(delta_fig, use_container_width=True)
-
-                    footprint_display = recent[["Open", "High", "Low", "Close", "Volume", "Est_Buy_Vol", "Est_Sell_Vol", "Delta"]].copy()
-                    footprint_display.index.name = "Time"
-                    st.dataframe(
-                        footprint_display.style.format({
-                            "Open": "{:.2f}", "High": "{:.2f}", "Low": "{:.2f}", "Close": "{:.2f}",
-                            "Volume": "{:,.0f}", "Est_Buy_Vol": "{:,.0f}", "Est_Sell_Vol": "{:,.0f}", "Delta": "{:+,.0f}"
-                        }).background_gradient(subset=["Delta"], cmap="RdYlGn"),
-                        width='stretch'
-                    )
-
-                    cum_delta = float(recent["Delta"].sum())
-                    st.metric("Cumulative Delta (session window)", f"{cum_delta:+,.0f}",
-                              delta="Net Buying" if cum_delta >= 0 else "Net Selling")
-
-                    st.caption("⚠️ This footprint is a volume-weighted proxy derived from OHLCV bars (close position within each bar's range), "
-                               "not true bid/ask executed-order footprint data. For genuine tick-by-tick footprint charts, a Level 2 / "
-                               "tick data feed (e.g. via a broker API) would be required.")
-                else:
-                    st.error("Could not fetch data for footprint/profile analysis.")
-            except Exception as e:
-                st.error(f"Error building footprint/profile: {str(e)}")
-
-        # Tab 11: Stock Analyze (16-Point Fundamental Checklist)
-        with tabs[10]:
-            st.subheader("🔍 How To Analyze Stocks — 16-Point Checklist")
-            st.caption("Fundamental research framework. Metrics are pulled live where available; "
-                       "purely qualitative items are shown as guiding questions for your own judgment.")
-
-            sa_symbol = st.selectbox("Symbol", NIFTY_50, key="sa_symbol_select")
-
-            with st.spinner(f"Pulling fundamentals for {sa_symbol}..."):
-                sa_result = get_fundamental_analysis(sa_symbol)
-
-            if not sa_result["ok"]:
-                st.error(f"Could not fetch fundamental data: {sa_result.get('error', 'unknown error')}")
-            else:
-                sections = sa_result["sections"]
-                left_items = [f for f in STOCK_ANALYZE_FRAMEWORK if f["num"] % 2 == 1]
-                right_items = [f for f in STOCK_ANALYZE_FRAMEWORK if f["num"] % 2 == 0]
-                col_left, col_right = st.columns(2)
-
-                def render_section(container, item):
-                    sec = sections.get(item["num"], {"metrics": []})
-                    with container.expander(f"{item['icon']} {item['num']}. {item['title']}", expanded=False):
-                        for label, value in sec["metrics"]:
-                            if label in ("Business Summary", "Note"):
-                                st.write(f"**{label}:** {value}")
-                            else:
-                                st.markdown(f"**{label}:** {value}")
-                        st.markdown("---")
-                        st.caption("Guiding questions:")
-                        for q in item["questions"]:
-                            st.markdown(f"- {q}")
-
-                for item in left_items:
-                    render_section(col_left, item)
-                for item in right_items:
-                    render_section(col_right, item)
-
-                st.divider()
-                st.caption("⚠️ Data sourced via Yahoo Finance; coverage for NSE-listed companies (especially SBC, buyback history, "
-                           "and management detail) is often incomplete. Use this as a starting checklist, not a substitute for reading "
-                           "the annual report / investor presentation.")
-
+        except Exception as _tab_e:
+            with tabs[10]:
+                st.error(f"Error rendering 'Stock Analyze' tab: {_tab_e}")
+                st.code(traceback.format_exc())
     except Exception as e:
         st.error(f"Application error: {str(e)}")
         st.code(traceback.format_exc())
