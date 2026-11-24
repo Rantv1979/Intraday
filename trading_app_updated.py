@@ -691,7 +691,75 @@ class KiteConnectManager:
         self.tick_buffer = {}
         self.candle_store = {}
         self.ws_running = False
-        
+        self._restore_from_session()
+
+    def _restore_from_session(self):
+        """Re-apply a saved access token after Streamlit reruns."""
+        token = st.session_state.get("kite_access_token") if hasattr(st, "session_state") else None
+        if token and KITECONNECT_AVAILABLE and self.api_key:
+            try:
+                self.kite = KiteConnect(api_key=self.api_key)
+                self.kite.set_access_token(token)
+                self.access_token = token
+                self.is_authenticated = True
+            except Exception as e:
+                logger.error(f"Kite session restore failed: {e}")
+
+    def render_sidebar_auth(self):
+        """Kite Connect authentication UI shown in the sidebar."""
+        sb = st.sidebar
+        sb.header("🔐 Kite Connect")
+
+        if not KITECONNECT_AVAILABLE:
+            sb.error("kiteconnect library not installed (pip install kiteconnect)")
+            return
+        if not self.api_key or not self.api_secret:
+            sb.error("KITE_API_KEY / KITE_API_SECRET not configured")
+            return
+
+        if self.is_authenticated:
+            sb.success("✅ Kite Connected")
+            if sb.button("Logout from Kite", key="kite_logout_btn"):
+                st.session_state.pop("kite_access_token", None)
+                self.is_authenticated = False
+                self.access_token = None
+                st.rerun()
+            return
+
+        if self.kite is None:
+            self.kite = KiteConnect(api_key=self.api_key)
+        sb.warning("Not authenticated")
+        sb.markdown(f"[🔗 Login to Kite Connect]({self.kite.login_url()})")
+        sb.caption("After login, copy the request_token from the redirect URL and paste below.")
+
+        request_token = sb.text_input("Request Token", type="password", key="kite_request_token_input")
+        if sb.button("Authenticate", key="kite_auth_btn", type="primary"):
+            if not request_token:
+                sb.error("Enter the request token first")
+            else:
+                try:
+                    data = self.kite.generate_session(request_token.strip(), api_secret=self.api_secret)
+                    self.kite.set_access_token(data["access_token"])
+                    st.session_state.kite_access_token = data["access_token"]
+                    self.access_token = data["access_token"]
+                    self.is_authenticated = True
+                    st.rerun()
+                except Exception as e:
+                    sb.error(f"Authentication failed: {e}")
+
+        with sb.expander("Already have an access token?"):
+            tok = st.text_input("Access Token", type="password", key="kite_access_token_input")
+            if st.button("Use Access Token", key="kite_use_token_btn"):
+                try:
+                    self.kite.set_access_token(tok.strip())
+                    self.kite.profile()  # validate
+                    st.session_state.kite_access_token = tok.strip()
+                    self.access_token = tok.strip()
+                    self.is_authenticated = True
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Invalid token: {e}")
+
     def login(self):
         """Login to Kite Connect"""
         try:
@@ -1862,6 +1930,17 @@ def get_fundamental_analysis(symbol):
     return result
 
 # Enhanced Data Manager with NEW integrated systems
+def get_shared_kite_manager():
+    """One KiteConnectManager per user session (survives Streamlit reruns)."""
+    if "kite_manager" not in st.session_state:
+        st.session_state.kite_manager = KiteConnectManager(KITE_API_KEY, KITE_API_SECRET)
+    return st.session_state.kite_manager
+
+
+class _KiteTabSkip(Exception):
+    """Used to skip the rest of the Kite tab without halting the whole script."""
+
+
 class EnhancedDataManager:
     def __init__(self):
         self.price_cache = {}
@@ -1874,7 +1953,7 @@ class EnhancedDataManager:
         self.portfolio_optimizer = PortfolioOptimizer()
         self.database = TradeDatabase()
         self.signal_filter = SignalQualityFilter()
-        self.kite_manager = KiteConnectManager(KITE_API_KEY, KITE_API_SECRET)
+        self.kite_manager = get_shared_kite_manager()
         self.backtest_engine = RealBacktestEngine()
 
     def _validate_live_price(self, symbol):
@@ -3944,6 +4023,10 @@ if __name__ == "__main__":
                 </div>
                 """, unsafe_allow_html=True)
     
+        # Kite Connect authentication (sidebar)
+        data_manager.kite_manager.render_sidebar_auth()
+        st.sidebar.markdown("---")
+
         # Sidebar with Strategy Performance
         st.sidebar.header("🎯 Strategy Performance")
         
@@ -4746,11 +4829,11 @@ if __name__ == "__main__":
                 # Check Kite authentication status
                 if not KITECONNECT_AVAILABLE:
                     st.error("❌ Kite Connect library not available. Please install: pip install kiteconnect")
-                    st.stop()
+                    raise _KiteTabSkip()
             
                 if not data_manager.kite_manager.is_authenticated:
                     st.warning("⚠️ Kite Connect not authenticated. Please authenticate in the sidebar.")
-                    st.stop()
+                    raise _KiteTabSkip()
             
                 # Simple chart interface
                 st.info("🎯 Kite Connect Live Charts - Real-time NSE data")
@@ -4844,6 +4927,8 @@ if __name__ == "__main__":
                         st.info("Note: Kite Connect requires proper authentication and API permissions.")
 
             # Tab 10: Market Footprint & Volume Profile
+        except _KiteTabSkip:
+            pass
         except Exception as _tab_e:
             with tabs[8]:
                 st.error(f"Error rendering 'Kite Live Charts' tab: {_tab_e}")
