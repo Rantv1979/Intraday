@@ -212,30 +212,57 @@ PRICE_REFRESH_MS = 30000
 MARKET_OPTIONS = ["CASH"]
 
 # Stock Universes - COMBINED ALL STOCKS
-NIFTY_50 = [
-   "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "HINDUNILVR.NS",
-    "ICICIBANK.NS", "KOTAKBANK.NS", "BHARTIARTL.NS", "ITC.NS", "LT.NS",
-    "SBIN.NS", "ASIANPAINT.NS", "HCLTECH.NS", "AXISBANK.NS", "MARUTI.NS",
-    "SUNPHARMA.NS", "TITAN.NS", "ULTRACEMCO.NS", "WIPRO.NS", "NTPC.NS",
-    "NESTLEIND.NS", "POWERGRID.NS", "M&M.NS", "BAJFINANCE.NS", "ONGC.NS",
-    "TATASTEEL.NS", "JSWSTEEL.NS", "ADANIPORTS.NS", "COALINDIA.NS",
-    "HDFCLIFE.NS", "DRREDDY.NS", "HINDALCO.NS", "CIPLA.NS", "SBILIFE.NS",
-    "GRASIM.NS", "TECHM.NS", "BAJAJFINSV.NS", "BRITANNIA.NS", "EICHERMOT.NS",
-    "DIVISLAB.NS", "SHREECEM.NS", "APOLLOHOSP.NS", "UPL.NS", "BAJAJ-AUTO.NS",
-    "HEROMOTOCO.NS", "INDUSINDBK.NS", "ADANIENT.NS", "TATACONSUM.NS", "BPCL.NS"
+# ---------------------------------------------------------------------------
+# NIFTY 50 / NIFTY 100 constituents (NSE trading symbols, snapshot ~23 Nov 2026).
+# These are the FALLBACK lists. At startup the app tries to download the official
+# constituent CSVs from NSE Indices and uses them instead when that works (see
+# _load_index_list below), so the lists stay correct after index rebalances.
+# ---------------------------------------------------------------------------
+_NIFTY_50_STATIC = [
+    "RELIANCE", "BHARTIARTL", "HDFCBANK", "ICICIBANK", "SBIN", "TCS", "BAJFINANCE", "LT", "KOTAKBANK",
+    "HINDUNILVR", "INFY", "SUNPHARMA", "ADANIPORTS", "MARUTI", "M&M", "AXISBANK", "TITAN", "ITC",
+    "ULTRACEMCO", "HCLTECH", "ADANIENT", "ETERNAL", "JSWSTEEL", "NTPC", "BAJAJFINSV", "BAJAJ-AUTO",
+    "BEL", "ONGC", "NESTLEIND", "ASIANPAINT", "POWERGRID", "COALINDIA", "SHRIRAMFIN", "EICHERMOT",
+    "INDIGO", "GRASIM", "TATASTEEL", "HINDALCO", "SBILIFE", "TECHM", "TRENT", "BSE", "JIOFIN",
+    "APOLLOHOSP", "HDFCLIFE", "DRREDDY", "CIPLA", "TATACONSUM", "MAXHEALTH", "TMPV",
+]
+_NIFTY_NEXT_50_STATIC = [
+    "ADANIPOWER", "HAL", "DIVISLAB", "ADANIGREEN", "HINDZINC", "DMART", "TVSMOTOR", "IOC", "DLF", "WIPRO",
+    "TORNTPHARM", "ADANIENSOL", "HYUNDAI", "MOTHERSON", "PNB", "TMCV", "SOLARINDS", "PIDILITIND",
+    "UNIONBANK", "CHOLAFIN", "TATACAP", "ABB", "VBL", "BOSCHLTD", "BANKBARODA", "VAML", "POWERINDIA",
+    "BPCL", "IDEA", "BAJAJHLDNG", "SIEMENS", "LTM", "CGPOWER", "GAIL", "CANBK", "ZYDUSLIFE", "BRITANNIA",
+    "JINDALSTEL", "HDFCAMC", "CUMMINSIND", "POLYCAB", "PFC", "ENRIN", "IRFC", "TATAPOWER", "MUTHOOTFIN",
+    "AMBUJACEM", "GODREJCP", "VEDL", "MAZDOCK",
 ]
 
-NIFTY_100 = NIFTY_50 + [
-    "BAJAJHLDNG.NS", "TATAMOTORS.NS", "VEDANTA.NS", "PIDILITIND.NS",
-    "BERGEPAINT.NS", "AMBUJACEM.NS", "DABUR.NS", "HAVELLS.NS", "ICICIPRULI.NS",
-    "MARICO.NS", "PEL.NS", "SIEMENS.NS", "TORNTPHARM.NS", "ACC.NS",
-    "AUROPHARMA.NS", "BOSCHLTD.NS", "GLENMARK.NS", "MOTHERSUMI.NS", "BIOCON.NS",
-    "ZYDUSLIFE.NS", "COLPAL.NS", "CONCOR.NS", "DLF.NS", "GODREJCP.NS",
-    "HINDPETRO.NS", "IBULHSGFIN.NS", "IOC.NS", "JINDALSTEL.NS", "LUPIN.NS",
-    "MANAPPURAM.NS", "MCDOWELL-N.NS", "NMDC.NS", "PETRONET.NS", "PFC.NS",
-    "PNB.NS", "RBLBANK.NS", "SAIL.NS", "SRTRANSFIN.NS", "TATAPOWER.NS",
-    "YESBANK.NS", "ZEEL.NS"
-]
+@st.cache_data(ttl=43200, show_spinner=False)
+def _load_index_list(csv_name):
+    """Official constituent list from NSE Indices (symbols only). Returns [] if unreachable."""
+    try:
+        r = requests.get(f"https://www.niftyindices.com/IndexConstituent/{csv_name}",
+                         headers={"User-Agent": "Mozilla/5.0", "Accept": "text/csv,*/*"}, timeout=6)
+        r.raise_for_status()
+        import io
+        df = pd.read_csv(io.StringIO(r.text))
+        col = next((c for c in df.columns if c.strip().lower() == "symbol"), None)
+        return [str(x).strip().upper() for x in df[col].dropna()] if col else []
+    except Exception:
+        return []
+
+_live50 = _load_index_list("ind_nifty50list.csv")
+_live100 = _load_index_list("ind_nifty100list.csv")
+UNIVERSE_SOURCE = {"nifty50": "static", "nifty100": "static"}
+if len(_live50) == 50:
+    _NIFTY_50_STATIC = _live50
+    UNIVERSE_SOURCE["nifty50"] = "NSE live"
+if len(_live100) == 100:
+    _NIFTY_100_FULL = _live100
+    UNIVERSE_SOURCE["nifty100"] = "NSE live"
+else:
+    _NIFTY_100_FULL = _NIFTY_50_STATIC + [x for x in _NIFTY_NEXT_50_STATIC if x not in _NIFTY_50_STATIC]
+
+NIFTY_50 = [f"{x}.NS" for x in _NIFTY_50_STATIC]
+NIFTY_100 = [f"{x}.NS" for x in _NIFTY_100_FULL]
 
 # MIDCAP STOCKS - High Potential for Intraday
 NIFTY_MIDCAP_150 = [
@@ -276,7 +303,8 @@ import re as _re
 TICKER_ALIASES = {
     "TATAMOTORS": "TMPV",      # Oct 2025 demerger: listed entity now trades as TMPV
     "VEDANTA": "VEDL",
-    "MINDTREE": "LTIM",
+    "MINDTREE": "LTM",
+    "LTIM": "LTM",
     "MOTHERSUMI": "MOTHERSON",
     "IBULHSGFIN": "SAMMAANCAP",
     "SRTRANSFIN": "SHRIRAMFIN",
@@ -4554,7 +4582,7 @@ if __name__ == "__main__":
                 if generate_signals:
                     _scan_cap = max_scan
                     if auto_generate and not generate_btn:
-                        _scan_cap = min(max_scan, 60) if max_scan else 60  # keep unattended scans short enough to finish
+                        _scan_cap = min(max_scan, 100) if max_scan else 100  # covers full Nifty 100; keeps unattended scans bounded
                     with st.spinner(f"Scanning {universe} stocks with enhanced strategies..."):
                         # Use high accuracy when enabled
                         signals = trader.generate_quality_signals(
