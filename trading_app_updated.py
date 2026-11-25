@@ -200,7 +200,13 @@ MAX_STOCK_TRADES = 10
 MAX_AUTO_TRADES = 10
 
 SIGNAL_REFRESH_MS = 30000
-AUTO_EXEC_MIN_QUALITY = 65  # quality_score gate for auto-execution (80 was almost unreachable)
+AUTO_EXEC_MIN_QUALITY = 65
+# Backtest win-rate gate. The old 0.65 gate was inconsistent with the engine itself: it simulates a 2R target
+# vs 1R stop (break-even win rate ~33%), and every standard strategy's prior (0.52-0.62) is BELOW 0.65, so
+# standard strategies could essentially never pass. 0.45 at 2:1 payoff is still clearly positive expectancy.
+MIN_HIST_WINRATE = 0.45
+REVERSION_STRATEGIES = {"RSI_MeanReversion", "Bollinger_Reversion", "RSI_Overbought",
+                        "Bollinger_Rejection", "Trend_Reversal", "RSI_Divergence"}  # quality_score gate for auto-execution (80 was almost unreachable)
 PRICE_REFRESH_MS = 30000
 
 MARKET_OPTIONS = ["CASH"]
@@ -692,7 +698,93 @@ class KiteConnectManager:
         self.tick_buffer = {}
         self.candle_store = {}
         self.ws_running = False
-        
+        self._instruments = None
+        self._candle_cache = {}
+        self._lock = threading.Lock()
+        self._last_hist_call = 0.0
+        self._fail_count = 0
+        self._disabled_until = 0.0
+        self.last_error = ""
+
+    KITE_INTERVALS = {"1m": "minute", "5m": "5minute", "15m": "15minute", "30m": "30minute", "1h": "60minute"}
+    KITE_INDEX_TOKENS = {"^NSEI": 256265, "^NSEBANK": 260105}
+    LOOKBACK_DAYS = {"1m": 3, "5m": 5, "15m": 10, "30m": 15, "1h": 60}
+
+    def _ensure_instruments(self):
+        if self._instruments:
+            return self._instruments
+        cached = st.session_state.get("kite_instruments")
+        if cached:
+            self._instruments = cached
+            return cached
+        rows = self.kite.instruments("NSE")
+        self._instruments = {r["tradingsymbol"]: r["instrument_token"]
+                             for r in rows if r.get("instrument_type") == "EQ"}
+        st.session_state["kite_instruments"] = self._instruments
+        return self._instruments
+
+    def get_instrument_token(self, symbol):
+        if symbol in self.KITE_INDEX_TOKENS:
+            return self.KITE_INDEX_TOKENS[symbol]
+        try:
+            return self._ensure_instruments().get(symbol.replace(".NS", ""))
+        except Exception as e:
+            self._handle_error(e)
+            return None
+
+    def _handle_error(self, e):
+        self.last_error = f"{type(e).__name__}: {e}"
+        logger.error(f"Kite error: {self.last_error}")
+        if type(e).__name__ == "TokenException" or "access_token" in str(e).lower():
+            # Kite access tokens expire daily (~6 AM IST) - require re-login
+            self.logout()
+            return
+        self._fail_count += 1
+        if self._fail_count >= 5:  # repeated failures (rate limit / network): pause Kite, let Yahoo cover
+            self._disabled_until = time.time() + 120
+            self._fail_count = 0
+
+    def fetch_candles(self, symbol, interval="15m", days=None):
+        """OHLCV DataFrame (Open/High/Low/Close/Volume, IST-aware index) from Kite, or None."""
+        if not (self.is_authenticated and self.kite is not None):
+            return None
+        if time.time() < self._disabled_until:
+            return None
+        ki = self.KITE_INTERVALS.get(interval)
+        if ki is None:
+            return None
+        token = self.get_instrument_token(symbol)
+        if token is None:
+            return None
+        days = days or self.LOOKBACK_DAYS.get(interval, 7)
+        key = (token, ki, days)
+        ttl = 900 if interval == "1h" else 30
+        cached = self._candle_cache.get(key)
+        if cached and time.time() - cached[0] < ttl:
+            return cached[1].copy()
+        with self._lock:
+            wait = 0.36 - (time.time() - self._last_hist_call)  # Kite historical limit ~3 req/sec
+            if wait > 0:
+                time.sleep(wait)
+            try:
+                to_dt = now_indian().replace(tzinfo=None)
+                rows = self.kite.historical_data(token, to_dt - timedelta(days=days), to_dt, ki)
+                self._fail_count = 0
+            except Exception as e:
+                self._handle_error(e)
+                return None
+            finally:
+                self._last_hist_call = time.time()
+        if not rows:
+            return None
+        df = pd.DataFrame(rows)
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date").rename(columns={"open": "Open", "high": "High", "low": "Low",
+                                                   "close": "Close", "volume": "Volume"})
+        df = df[["Open", "High", "Low", "Close", "Volume"]]
+        self._candle_cache[key] = (time.time(), df)
+        return df.copy()
+
     def login(self):
         """Login to Kite Connect"""
         try:
@@ -935,6 +1027,9 @@ def get_shared_kite_manager():
     if "kite_manager" not in st.session_state:
         st.session_state["kite_manager"] = KiteConnectManager(KITE_API_KEY, KITE_API_SECRET)
     mgr = st.session_state["kite_manager"]
+    if not hasattr(mgr, "fetch_candles"):  # stale object from an older version of this file
+        st.session_state["kite_manager"] = KiteConnectManager(KITE_API_KEY, KITE_API_SECRET)
+        mgr = st.session_state["kite_manager"]
     mgr.set_credentials(st.session_state.get("kite_api_key_override") or KITE_API_KEY,
                         st.session_state.get("kite_api_secret_override") or KITE_API_SECRET)
     mgr.restore_session()
@@ -1123,89 +1218,89 @@ class SignalQualityFilter:
     """Enhanced signal filtering to improve trade quality"""
     
     @staticmethod
-    def filter_high_quality_signals(signals, data_manager):
-        """Filter only high-quality signals with multiple confirmations"""
+    def filter_high_quality_signals(signals, data_manager, require_adx=True, diag=None):
+        """Strategy-aware quality filter.
+        - Trend strategies must be aligned with the EMA stack / ADX.
+        - Mean-reversion strategies (RSI/Bollinger/reversal) are judged on their own terms; the old filter
+          demanded price > EMA8 > EMA21 > EMA50 AND RSI <= 65 for every BUY, which a RSI<30 oversold
+          setup can never satisfy, so every reversion signal was silently discarded.
+        `diag` (a Counter) records why signals were rejected so the UI can show it."""
         filtered = []
-        
+
+        def reject(reason):
+            if diag is not None:
+                diag[reason] += 1
+
         for signal in signals:
             symbol = signal["symbol"]
-            
+            is_reversion = signal.get("strategy") in REVERSION_STRATEGIES
+
             try:
-                # Get recent data for analysis
                 data = data_manager.get_stock_data(symbol, "15m")
                 if data is None or len(data) < 30:
-                    continue
-                    
-                # 1. Volume Confirmation (minimum 1.3x average volume)
-                volume = data["Volume"].iloc[-1]
-                avg_volume = data["Volume"].rolling(20).mean().iloc[-1] if len(data) >= 20 else volume
-                volume_ratio = volume / avg_volume if avg_volume > 0 else 1
-                
-                if volume_ratio < 1.3:  # Minimum 30% above average volume
-                    continue
-                
-                # 2. Trend Alignment Check
+                    reject("not enough data"); continue
+
+                # 1. Volume: use the better of the last two bars (the latest bar is usually still forming
+                #    and under-reports volume).
+                vol_s = data["Volume"]
+                avg_volume = vol_s.rolling(20).mean().iloc[-1] if len(data) >= 20 else vol_s.iloc[-1]
+                last_vol = max(vol_s.iloc[-1], vol_s.iloc[-2]) if len(vol_s) >= 2 else vol_s.iloc[-1]
+                volume_ratio = last_vol / avg_volume if avg_volume > 0 else 1
+                min_vol = 1.0 if is_reversion else 1.2
+                if volume_ratio < min_vol:
+                    reject("volume too low"); continue
+
                 price = data["Close"].iloc[-1]
-                ema8 = data["EMA8"].iloc[-1]
-                ema21 = data["EMA21"].iloc[-1]
-                ema50 = data["EMA50"].iloc[-1]
-                
-                if signal["action"] == "BUY":
-                    # For BUY: Price should be above key EMAs
-                    if not (price > ema8 > ema21 > ema50):
-                        continue
-                else:  # SELL
-                    # For SELL: Price should be below key EMAs
-                    if not (price < ema8 < ema21 < ema50):
-                        continue
-                
-                # 3. RSI Filter (avoid extreme overbought/oversold for entries)
+                ema8, ema21, ema50 = data["EMA8"].iloc[-1], data["EMA21"].iloc[-1], data["EMA50"].iloc[-1]
                 rsi_val = data["RSI14"].iloc[-1]
-                if signal["action"] == "BUY" and rsi_val > 65:
-                    continue
-                if signal["action"] == "SELL" and rsi_val < 35:
-                    continue
-                
-                # 4. Risk-Reward Ratio (minimum 2.5:1)
-                if signal.get("risk_reward", 0) < 2.5:
-                    continue
-                
-                # 5. Confidence Threshold (minimum 70% - REDUCED from 75%)
-                if signal.get("confidence", 0) < 0.70:  # CHANGED: 0.75 → 0.70
-                    continue
-                
-                # 6. Price relative to VWAP
                 vwap = data["VWAP"].iloc[-1]
-                if signal["action"] == "BUY" and price < vwap * 0.99:
-                    continue  # Too far below VWAP for BUY
-                if signal["action"] == "SELL" and price > vwap * 1.01:
-                    continue  # Too far above VWAP for SELL
-                
-                # 7. ADX Strength (minimum 25 for trend strength) - ADDED TREND CHECK
-                adx_val = data["ADX"].iloc[-1] if 'ADX' in data.columns else 20
-                if adx_val < 25:  # CHANGED: 20 → 25 for stronger trends
-                    continue
-                
-                # 8. ATR Filter (avoid extremely volatile stocks)
-                atr = data["ATR"].iloc[-1] if 'ATR' in data.columns else price * 0.01
+
+                if not is_reversion:
+                    # 2. Trend alignment
+                    if signal["action"] == "BUY" and not (price > ema8 > ema21 > ema50):
+                        reject("EMAs not aligned"); continue
+                    if signal["action"] == "SELL" and not (price < ema8 < ema21 < ema50):
+                        reject("EMAs not aligned"); continue
+                    # 3. Avoid chasing extremes
+                    if signal["action"] == "BUY" and rsi_val > 70:
+                        reject("RSI extreme"); continue
+                    if signal["action"] == "SELL" and rsi_val < 30:
+                        reject("RSI extreme"); continue
+                    # 4. VWAP distance
+                    if signal["action"] == "BUY" and price < vwap * 0.99:
+                        reject("too far from VWAP"); continue
+                    if signal["action"] == "SELL" and price > vwap * 1.01:
+                        reject("too far from VWAP"); continue
+                    # 5. ADX trend strength (sidebar toggle)
+                    if require_adx:
+                        adx_val = data["ADX"].iloc[-1] if "ADX" in data.columns else 20
+                        if adx_val < 25:
+                            reject("ADX < 25"); continue
+
+                # Risk-reward and confidence apply to everything
+                if signal.get("risk_reward", 0) < 2.0:
+                    reject("R:R < 2.0"); continue
+                if signal.get("confidence", 0) < 0.70:
+                    reject("confidence < 70%"); continue
+
+                atr = data["ATR"].iloc[-1] if "ATR" in data.columns else price * 0.01
                 atr_percent = (atr / price) * 100
-                if atr_percent > 3.0:  # Avoid stocks with >3% daily volatility
-                    continue
-                
-                # All checks passed - mark as high quality
+                if atr_percent > 3.0:
+                    reject("too volatile (ATR > 3%)"); continue
+
                 signal["quality_score"] = SignalQualityFilter.calculate_quality_score(signal, data)
                 signal["volume_ratio"] = volume_ratio
                 signal["atr_percent"] = atr_percent
-                signal["trend_aligned"] = True
-                
+                signal["trend_aligned"] = not is_reversion
                 filtered.append(signal)
-                
+
             except Exception as e:
                 logger.error(f"Error filtering signal for {symbol}: {e}")
+                reject("error")
                 continue
-        
+
         return filtered
-    
+
     @staticmethod
     def calculate_quality_score(signal, data):
         """Calculate a comprehensive quality score (0-100)"""
@@ -1983,6 +2078,38 @@ class EnhancedDataManager:
         self.kite_manager = get_shared_kite_manager()
         self.backtest_engine = RealBacktestEngine()
 
+    def _data_mode(self):
+        m = st.session_state.get("data_source_select", "Auto (Kite, Yahoo fallback)")
+        if m.startswith("Kite only"):
+            return "kite"
+        if m.startswith("Yahoo only"):
+            return "yahoo"
+        return "auto"
+
+    def _kite_candles(self, symbol, interval, days=None):
+        if self._data_mode() == "yahoo":
+            return None
+        try:
+            return self.kite_manager.fetch_candles(symbol, interval, days)
+        except Exception as e:
+            logger.error(f"kite candles failed {symbol}: {e}")
+            return None
+
+    def _get_htf_close(self, symbol):
+        """1h closes for higher-timeframe trend: Kite first, Yahoo as fallback."""
+        k = self._kite_candles(symbol, "1h", 60)
+        if k is not None and len(k) >= 50:
+            return k["Close"]
+        if self._data_mode() == "kite":
+            return None
+        htf = self._fetch_yf(symbol, period="60d", interval="1h")
+        if htf is not None and len(htf) >= 50:
+            if isinstance(htf.columns, pd.MultiIndex):
+                htf.columns = ["_".join(map(str, col)).strip() for col in htf.columns.values]
+            htf = htf.rename(columns={c: c.capitalize() for c in htf.columns})
+            return htf["Close"]
+        return None
+
     def _validate_live_price(self, symbol):
         now_ts = time.time()
         key = f"price_{symbol}"
@@ -1990,6 +2117,13 @@ class EnhancedDataManager:
             cached = self.price_cache[key]
             if now_ts - cached["ts"] < 2:
                 return cached["price"]
+        kdf = self._kite_candles(symbol, "1m", 3)
+        if kdf is not None and len(kdf) > 0:
+            price = float(kdf["Close"].iloc[-1])
+            self.price_cache[key] = {"price": round(price, 2), "ts": now_ts}
+            return round(price, 2)
+        if self._data_mode() == "kite":
+            return float(self.price_cache.get(key, {}).get("price", 1000.0))
         try:
             ticker = get_yf_ticker(symbol)
             df = ticker.history(period="1d", interval="1m")
@@ -2027,7 +2161,15 @@ class EnhancedDataManager:
         else:
             period = "14d"
 
-        df = self._fetch_yf(symbol, period, interval)
+        source = None
+        df = self._kite_candles(symbol, interval)
+        if df is not None and len(df) >= 20:
+            source = "kite"
+        elif self._data_mode() != "kite":
+            df = self._fetch_yf(symbol, period, interval)
+            source = "yahoo"
+        else:
+            df = None
         if df is None or df.empty or len(df) < 20:
             return self.create_validated_demo_data(symbol)
 
@@ -2046,6 +2188,8 @@ class EnhancedDataManager:
             return self.create_validated_demo_data(symbol)
 
         try:
+            if source != "yahoo":
+                raise RuntimeError("kite candles already include the live bar")
             live_price = self._validate_live_price(symbol)
             current_close = df["Close"].iloc[-1]
             price_diff_pct = abs(live_price - current_close) / max(current_close, 1e-6)
@@ -2092,12 +2236,8 @@ class EnhancedDataManager:
         # Neutral (0) fails both the `== 1` and `== -1` checks, so a missing
         # confirmation correctly blocks the signal instead of faking one.
         try:
-            htf = self._fetch_yf(symbol, period="60d", interval="1h")
-            if htf is not None and len(htf) >= 50:
-                if isinstance(htf.columns, pd.MultiIndex):
-                    htf.columns = ["_".join(map(str, col)).strip() for col in htf.columns.values]
-                htf = htf.rename(columns={c: c.capitalize() for c in htf.columns})
-                htf_close = htf["Close"]
+            htf_close = self._get_htf_close(symbol)
+            if htf_close is not None:
                 htf_ema50 = ema(htf_close, 50).iloc[-1]
                 htf_ema200 = ema(htf_close, 200).iloc[-1] if len(htf_close) > 200 else ema(htf_close, 100).iloc[-1]
                 df["HTF_Trend"] = 1 if htf_ema50 > htf_ema200 else -1
@@ -2107,6 +2247,7 @@ class EnhancedDataManager:
             df["HTF_Trend"] = 0  # unavailable -> neutral, not bullish
 
         df.attrs["is_demo"] = False
+        df.attrs["source"] = source
         return df
 
     def create_validated_demo_data(self, symbol):
@@ -2148,6 +2289,7 @@ class EnhancedDataManager:
         # generate_quality_signals()/auto_execute_signals()/execute_trade() below —
         # do not remove those checks.
         df.attrs["is_demo"] = True
+        df.attrs["source"] = "demo"
         return df
 
     def get_historical_accuracy(self, symbol, strategy):
@@ -2265,9 +2407,9 @@ class EnhancedDataManager:
             win_probability, win_loss_ratio, available_capital, price, atr
         )
     
-    def filter_high_quality_signals(self, signals):
+    def filter_high_quality_signals(self, signals, require_adx=True, diag=None):
         """Filter signals for high quality"""
-        return self.signal_filter.filter_high_quality_signals(signals, self)
+        return self.signal_filter.filter_high_quality_signals(signals, self, require_adx=require_adx, diag=diag)
     
     def get_kite_data(self, instrument_token, interval="minute", days=1):
         """Get data from Kite Connect"""
@@ -3145,7 +3287,7 @@ class MultiStrategyIntradayTrader:
                 rr = abs(target - live) / max(abs(live - stop_loss), 1e-6)
                 if rr >= 2.5:
                     historical_accuracy = self.data_manager.get_historical_accuracy(symbol, strategy)
-                    if historical_accuracy >= 0.65:
+                    if historical_accuracy >= MIN_HIST_WINRATE:
                         # NEW: Enhanced confidence with ML and market regime
                         base_win_probability = min(0.85, historical_accuracy * 1.1)
                         enhanced_confidence = (base_win_probability + ml_confidence) / 2
@@ -3180,7 +3322,7 @@ class MultiStrategyIntradayTrader:
                 rr = abs(target - live) / max(abs(live - stop_loss), 1e-6)
                 if rr >= 2.5:
                     historical_accuracy = self.data_manager.get_historical_accuracy(symbol, strategy)
-                    if historical_accuracy >= 0.65:
+                    if historical_accuracy >= MIN_HIST_WINRATE:
                         base_win_probability = min(0.80, historical_accuracy * 1.1)
                         enhanced_confidence = (base_win_probability + ml_confidence) / 2
                         win_probability = min(0.85, enhanced_confidence)
@@ -3202,7 +3344,7 @@ class MultiStrategyIntradayTrader:
                 rr = abs(target - live) / max(abs(live - stop_loss), 1e-6)
                 if rr >= 2.5:
                     historical_accuracy = self.data_manager.get_historical_accuracy(symbol, strategy)
-                    if historical_accuracy >= 0.65:
+                    if historical_accuracy >= MIN_HIST_WINRATE:
                         signals.append({
                             "symbol": symbol, "action": action, "entry": live, "current_price": live,
                             "target": target, "stop_loss": stop_loss, "confidence": confidence,
@@ -3218,7 +3360,7 @@ class MultiStrategyIntradayTrader:
                 rr = abs(target - live) / max(abs(live - stop_loss), 1e-6)
                 if rr >= 2.5:
                     historical_accuracy = self.data_manager.get_historical_accuracy(symbol, strategy)
-                    if historical_accuracy >= 0.65:
+                    if historical_accuracy >= MIN_HIST_WINRATE:
                         signals.append({
                             "symbol": symbol, "action": action, "entry": live, "current_price": live,
                             "target": target, "stop_loss": stop_loss, "confidence": confidence,
@@ -3235,7 +3377,7 @@ class MultiStrategyIntradayTrader:
                 rr = abs(target - live) / max(abs(live - stop_loss), 1e-6)
                 if rr >= 2.5:
                     historical_accuracy = self.data_manager.get_historical_accuracy(symbol, strategy)
-                    if historical_accuracy >= 0.65:
+                    if historical_accuracy >= MIN_HIST_WINRATE:
                         signals.append({
                             "symbol": symbol, "action": action, "entry": live, "current_price": live,
                             "target": target, "stop_loss": stop_loss, "confidence": confidence,
@@ -3251,7 +3393,7 @@ class MultiStrategyIntradayTrader:
                 rr = abs(target - live) / max(abs(live - stop_loss), 1e-6)
                 if rr >= 2.5:
                     historical_accuracy = self.data_manager.get_historical_accuracy(symbol, strategy)
-                    if historical_accuracy >= 0.65:
+                    if historical_accuracy >= MIN_HIST_WINRATE:
                         signals.append({
                             "symbol": symbol, "action": action, "entry": live, "current_price": live,
                             "target": target, "stop_loss": stop_loss, "confidence": confidence,
@@ -3267,7 +3409,7 @@ class MultiStrategyIntradayTrader:
                 rr = abs(target - live) / max(abs(live - stop_loss), 1e-6)
                 if rr >= 2.5:
                     historical_accuracy = self.data_manager.get_historical_accuracy(symbol, strategy)
-                    if historical_accuracy >= 0.65:
+                    if historical_accuracy >= MIN_HIST_WINRATE:
                         signals.append({
                             "symbol": symbol, "action": action, "entry": live, "current_price": live,
                             "target": target, "stop_loss": stop_loss, "confidence": confidence,
@@ -3283,7 +3425,7 @@ class MultiStrategyIntradayTrader:
                 rr = abs(target - live) / max(abs(live - stop_loss), 1e-6)
                 if rr >= 2.5:
                     historical_accuracy = self.data_manager.get_historical_accuracy(symbol, strategy)
-                    if historical_accuracy >= 0.65:
+                    if historical_accuracy >= MIN_HIST_WINRATE:
                         signals.append({
                             "symbol": symbol, "action": action, "entry": live, "current_price": live,
                             "target": target, "stop_loss": stop_loss, "confidence": confidence,
@@ -3307,7 +3449,7 @@ class MultiStrategyIntradayTrader:
                     rr = abs(target - live) / max(abs(live - stop_loss), 1e-6)
                     if rr >= 2.5:
                         historical_accuracy = self.data_manager.get_historical_accuracy(symbol, strategy)
-                        if historical_accuracy >= 0.65:
+                        if historical_accuracy >= MIN_HIST_WINRATE:
                             signals.append({
                                 "symbol": symbol, "action": action, "entry": live, "current_price": live,
                                 "target": target, "stop_loss": stop_loss, "confidence": confidence,
@@ -3329,7 +3471,7 @@ class MultiStrategyIntradayTrader:
                 rr = abs(target - live) / max(abs(live - stop_loss), 1e-6)
                 if rr >= 2.5:
                     historical_accuracy = self.data_manager.get_historical_accuracy(symbol, strategy)
-                    if historical_accuracy >= 0.65:
+                    if historical_accuracy >= MIN_HIST_WINRATE:
                         signals.append({
                             "symbol": symbol, "action": action, "entry": live, "current_price": live,
                             "target": target, "stop_loss": stop_loss, "confidence": confidence,
@@ -3354,8 +3496,11 @@ class MultiStrategyIntradayTrader:
             logger.error(f"Error generating signals for {symbol}: {e}")
             return signals
 
-    def generate_quality_signals(self, universe, max_scan=None, min_confidence=0.70, min_score=6, use_high_accuracy=True):  # CHANGED: Default confidence 0.70, score 6
+    def generate_quality_signals(self, universe, max_scan=None, min_confidence=0.70, min_score=6, use_high_accuracy=True, apply_filter=True, require_adx=True):  # CHANGED: Default confidence 0.70, score 6
         signals = []
+        from collections import Counter
+        diag = Counter()
+        reject_reasons = Counter()
         
         # Determine which universe to scan
         if universe == "Nifty 50":
@@ -3392,7 +3537,12 @@ class MultiStrategyIntradayTrader:
                 # Get stock data
                 data = self.data_manager.get_stock_data(symbol, "15m")
                 if data is None or len(data) < 30:
+                    diag["no/short data"] += 1
                     continue
+                diag["symbols scanned"] += 1
+                diag[f"data source: {getattr(data, 'attrs', {}).get('source', '?')}"] += 1
+                if bool(getattr(data, "attrs", {}).get("is_demo", False)):
+                    diag["synthetic demo data (live feed failed)"] += 1
                 
                 # Generate high accuracy signals when enabled
                 if use_high_accuracy:
@@ -3410,14 +3560,18 @@ class MultiStrategyIntradayTrader:
         progress_bar.empty()
         status_text.empty()
         
+        diag["raw signals from strategies"] = len(signals)
         # Filter signals based on confidence and score
         signals = [s for s in signals if s.get("confidence", 0) >= min_confidence and s.get("score", 0) >= min_score]
+        diag["after min confidence/score"] = len(signals)
         
-        # Apply high-quality filtering
-        if len(signals) > 0:
-            filtered_signals = self.data_manager.filter_high_quality_signals(signals)
+        # Apply high-quality filtering (sidebar toggles are now actually wired in)
+        if len(signals) > 0 and apply_filter:
+            filtered_signals = self.data_manager.filter_high_quality_signals(signals, require_adx=require_adx, diag=reject_reasons)
             st.info(f"📊 Filtered {len(signals)} → {len(filtered_signals)} high-quality signals")
             signals = filtered_signals
+        diag["final signals"] = len(signals)
+        self.last_scan_diag = {"funnel": dict(diag), "rejections": dict(reject_reasons)}
         
         # Sort by score and confidence
         signals.sort(key=lambda x: (x.get("score", 0), x.get("confidence", 0)), reverse=True)
@@ -3836,6 +3990,11 @@ if __name__ == "__main__":
 
         @st.cache_data(ttl=30, show_spinner=False)
         def _fetch_index_snapshot(index_symbol):
+            kdf = data_manager._kite_candles(index_symbol, "5m", 3)
+            if kdf is not None and len(kdf) >= 2:
+                return {"current": float(kdf["Close"].iloc[-1]), "prev": float(kdf["Close"].iloc[-2])}
+            if data_manager._data_mode() == "kite":
+                return None
             data = yf_download_robust(index_symbol, period="1d", interval="5m", auto_adjust=False)
             if data is None or data.empty or len(data) < 2:
                 return None
@@ -4096,6 +4255,14 @@ if __name__ == "__main__":
                             st.rerun()
                         else:
                             st.error(msg)
+        st.sidebar.selectbox("Market data source",
+                             ["Auto (Kite, Yahoo fallback)", "Kite only", "Yahoo only"],
+                             key="data_source_select",
+                             help="Auto uses Kite whenever it is connected and falls back to Yahoo Finance per symbol if Kite is unavailable.")
+        if kite_mgr.last_error and not kite_mgr.is_authenticated:
+            st.sidebar.warning(f"Kite: {kite_mgr.last_error[:160]}")
+        elif time.time() < kite_mgr._disabled_until:
+            st.sidebar.warning("Kite temporarily paused after repeated errors - using Yahoo fallback.")
         st.sidebar.markdown("---")
 
         # Sidebar with Strategy Performance
@@ -4357,8 +4524,18 @@ if __name__ == "__main__":
                             max_scan=_scan_cap,
                             min_confidence=min_conf_percent/100.0, 
                             min_score=min_score,
-                            use_high_accuracy=enable_high_accuracy
+                            use_high_accuracy=enable_high_accuracy,
+                            apply_filter=enable_signal_filtering,
+                            require_adx=require_adx_trend
                         )
+                    _d = getattr(trader, "last_scan_diag", None)
+                    if _d:
+                        with st.expander("🔎 Scan diagnostics (why signals were / weren't produced)", expanded=not signals):
+                            st.write("**Funnel**", _d["funnel"])
+                            if _d["rejections"]:
+                                st.write("**Rejected by quality filter**", _d["rejections"])
+                            st.caption("If 'raw signals from strategies' is 0, no stock currently meets any strategy's entry rule. "
+                                       "If 'synthetic demo data' > 0, Yahoo Finance is failing and those stocks are skipped.")
                 
                     if signals:
                         # Separate BUY and SELL signals
