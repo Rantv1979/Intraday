@@ -199,7 +199,7 @@ MAX_DAILY_TRADES = 10
 MAX_STOCK_TRADES = 10
 MAX_AUTO_TRADES = 10
 
-SIGNAL_REFRESH_MS = 30000
+SIGNAL_REFRESH_MS = 150000
 AUTO_EXEC_MIN_QUALITY = 65
 # Backtest win-rate gate. The old 0.65 gate was inconsistent with the engine itself: it simulates a 2R target
 # vs 1R stop (break-even win rate ~33%), and every standard strategy's prior (0.52-0.62) is BELOW 0.65, so
