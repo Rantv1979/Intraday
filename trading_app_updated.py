@@ -2853,9 +2853,13 @@ class MultiStrategyIntradayTrader:
                 try:
                     data = self.data_manager.get_stock_data(symbol, "5m")
                     price = float(data["Close"].iloc[-1]) if data is not None and len(data) > 0 else pos["entry_price"]
-                    total += pos["quantity"] * price
                 except Exception:
-                    total += pos["quantity"] * pos["entry_price"]
+                    price = pos["entry_price"]
+                if pos.get("action") == "SELL":
+                    # short: cash only had the margin deducted, so equity = margin + unrealised P&L
+                    total += pos.get("margin_used", 0.0) + (pos["entry_price"] - price) * pos["quantity"]
+                else:
+                    total += pos["quantity"] * price
         return total
 
     def execute_trade(self, symbol, action, quantity, price, stop_loss=None, target=None, win_probability=0.75, auto_trade=False, strategy=None, is_demo_data=False):
@@ -3130,7 +3134,7 @@ class MultiStrategyIntradayTrader:
             self.cash += pos["quantity"] * exit_price
         else:
             pnl = (pos["entry_price"] - exit_price) * pos["quantity"]
-            self.cash += pos.get("margin_used", 0) + (pos["quantity"] * pos["entry_price"])
+            self.cash += pos.get("margin_used", 0) + pnl
         
         pos["status"] = "CLOSED"
         pos["exit_price"] = float(exit_price)
