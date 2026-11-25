@@ -691,75 +691,7 @@ class KiteConnectManager:
         self.tick_buffer = {}
         self.candle_store = {}
         self.ws_running = False
-        self._restore_from_session()
-
-    def _restore_from_session(self):
-        """Re-apply a saved access token after Streamlit reruns."""
-        token = st.session_state.get("kite_access_token") if hasattr(st, "session_state") else None
-        if token and KITECONNECT_AVAILABLE and self.api_key:
-            try:
-                self.kite = KiteConnect(api_key=self.api_key)
-                self.kite.set_access_token(token)
-                self.access_token = token
-                self.is_authenticated = True
-            except Exception as e:
-                logger.error(f"Kite session restore failed: {e}")
-
-    def render_sidebar_auth(self):
-        """Kite Connect authentication UI shown in the sidebar."""
-        sb = st.sidebar
-        sb.header("🔐 Kite Connect")
-
-        if not KITECONNECT_AVAILABLE:
-            sb.error("kiteconnect library not installed (pip install kiteconnect)")
-            return
-        if not self.api_key or not self.api_secret:
-            sb.error("KITE_API_KEY / KITE_API_SECRET not configured")
-            return
-
-        if self.is_authenticated:
-            sb.success("✅ Kite Connected")
-            if sb.button("Logout from Kite", key="kite_logout_btn"):
-                st.session_state.pop("kite_access_token", None)
-                self.is_authenticated = False
-                self.access_token = None
-                st.rerun()
-            return
-
-        if self.kite is None:
-            self.kite = KiteConnect(api_key=self.api_key)
-        sb.warning("Not authenticated")
-        sb.markdown(f"[🔗 Login to Kite Connect]({self.kite.login_url()})")
-        sb.caption("After login, copy the request_token from the redirect URL and paste below.")
-
-        request_token = sb.text_input("Request Token", type="password", key="kite_request_token_input")
-        if sb.button("Authenticate", key="kite_auth_btn", type="primary"):
-            if not request_token:
-                sb.error("Enter the request token first")
-            else:
-                try:
-                    data = self.kite.generate_session(request_token.strip(), api_secret=self.api_secret)
-                    self.kite.set_access_token(data["access_token"])
-                    st.session_state.kite_access_token = data["access_token"]
-                    self.access_token = data["access_token"]
-                    self.is_authenticated = True
-                    st.rerun()
-                except Exception as e:
-                    sb.error(f"Authentication failed: {e}")
-
-        with sb.expander("Already have an access token?"):
-            tok = st.text_input("Access Token", type="password", key="kite_access_token_input")
-            if st.button("Use Access Token", key="kite_use_token_btn"):
-                try:
-                    self.kite.set_access_token(tok.strip())
-                    self.kite.profile()  # validate
-                    st.session_state.kite_access_token = tok.strip()
-                    self.access_token = tok.strip()
-                    self.is_authenticated = True
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Invalid token: {e}")
-
+        
     def login(self):
         """Login to Kite Connect"""
         try:
@@ -803,6 +735,99 @@ class KiteConnectManager:
             st.error(f"Kite Connect login error: {str(e)}")
             return False
     
+    # ---- Robust authentication helpers (used by the sidebar login) ----
+    @staticmethod
+    def extract_request_token(text):
+        """Accept either a bare request_token or the full redirect URL."""
+        text = (text or "").strip()
+        if "request_token=" in text:
+            try:
+                from urllib.parse import urlparse, parse_qs
+                qs = parse_qs(urlparse(text).query)
+                if "request_token" in qs:
+                    return qs["request_token"][0].strip()
+            except Exception:
+                pass
+            m = _re.search(r"request_token=([A-Za-z0-9]+)", text)
+            if m:
+                return m.group(1)
+        return text
+
+    def set_credentials(self, api_key, api_secret):
+        if api_key:
+            self.api_key = api_key
+        if api_secret:
+            self.api_secret = api_secret
+
+    def get_login_url(self):
+        if not self.api_key:
+            return None
+        try:
+            return KiteConnect(api_key=self.api_key).login_url()
+        except Exception as e:
+            logger.error(f"login_url error: {e}")
+            return None
+
+    def connect_with_access_token(self, access_token):
+        """Authenticate using an existing access token. Returns (ok, message)."""
+        if not KITECONNECT_AVAILABLE:
+            return False, "kiteconnect library not installed"
+        if not self.api_key:
+            return False, "KITE_API_KEY missing"
+        try:
+            self.kite = KiteConnect(api_key=self.api_key)
+            self.kite.set_access_token(access_token)
+            profile = self.kite.profile()  # validates the token
+            self.access_token = access_token
+            self.is_authenticated = True
+            st.session_state["kite_access_token"] = access_token
+            st.session_state["kite_user_name"] = profile.get("user_name", "")
+            return True, f"Authenticated as {profile.get('user_name', '')}"
+        except Exception as e:
+            self.is_authenticated = False
+            return False, f"Token rejected: {e}"
+
+    def connect_with_request_token(self, request_token):
+        """Exchange the one-time request_token for an access token. Returns (ok, message)."""
+        if not KITECONNECT_AVAILABLE:
+            return False, "kiteconnect library not installed"
+        if not self.api_key or not self.api_secret:
+            return False, "KITE_API_KEY / KITE_API_SECRET missing"
+        request_token = self.extract_request_token(request_token)
+        if not request_token:
+            return False, "Empty request token"
+        try:
+            kite = KiteConnect(api_key=self.api_key)
+            data = kite.generate_session(request_token, api_secret=self.api_secret)
+            return self.connect_with_access_token(data["access_token"])
+        except Exception as e:
+            self.is_authenticated = False
+            return False, (f"Session generation failed: {e}. "
+                           "Request token is single-use and expires in a few minutes - "
+                           "click the login link again to get a fresh one.")
+
+    def restore_session(self):
+        """Re-attach to a token saved in st.session_state (survives Streamlit reruns)."""
+        if self.is_authenticated and self.kite is not None:
+            return True
+        tok = st.session_state.get("kite_access_token")
+        if tok and self.api_key and KITECONNECT_AVAILABLE:
+            try:
+                self.kite = KiteConnect(api_key=self.api_key)
+                self.kite.set_access_token(tok)
+                self.access_token = tok
+                self.is_authenticated = True
+                return True
+            except Exception:
+                pass
+        return False
+
+    def logout(self):
+        self.is_authenticated = False
+        self.access_token = None
+        st.session_state.pop("kite_access_token", None)
+        st.session_state.pop("kite_user_name", None)
+
     def get_live_data(self, instrument_token, interval="minute", from_date=None, to_date=None):
         """Get live data from Kite Connect"""
         if not self.is_authenticated:
@@ -901,6 +926,18 @@ class KiteConnectManager:
     def get_candle_data(self, token):
         """Get current candle data for a token"""
         return self.candle_store.get(token)
+
+def get_shared_kite_manager():
+    """ONE KiteConnectManager per browser session.
+    Previously EnhancedDataManager() was rebuilt on every Streamlit rerun, which created a
+    fresh manager with is_authenticated=False each time - so login never 'stuck'."""
+    if "kite_manager" not in st.session_state:
+        st.session_state["kite_manager"] = KiteConnectManager(KITE_API_KEY, KITE_API_SECRET)
+    mgr = st.session_state["kite_manager"]
+    mgr.set_credentials(st.session_state.get("kite_api_key_override") or KITE_API_KEY,
+                        st.session_state.get("kite_api_secret_override") or KITE_API_SECRET)
+    mgr.restore_session()
+    return mgr
 
 # NEW: Peak Market Hours Check - Optimized for 9:30 AM - 2:30 PM
 def is_peak_market_hours():
@@ -1930,17 +1967,6 @@ def get_fundamental_analysis(symbol):
     return result
 
 # Enhanced Data Manager with NEW integrated systems
-def get_shared_kite_manager():
-    """One KiteConnectManager per user session (survives Streamlit reruns)."""
-    if "kite_manager" not in st.session_state:
-        st.session_state.kite_manager = KiteConnectManager(KITE_API_KEY, KITE_API_SECRET)
-    return st.session_state.kite_manager
-
-
-class _KiteTabSkip(Exception):
-    """Used to skip the rest of the Kite tab without halting the whole script."""
-
-
 class EnhancedDataManager:
     def __init__(self):
         self.price_cache = {}
@@ -3470,10 +3496,7 @@ def create_kite_live_charts():
     st.subheader("📈 Kite Connect Live Charts")
     
     # Initialize Kite Connect
-    if "kite_manager" not in st.session_state:
-        st.session_state.kite_manager = KiteConnectManager(KITE_API_KEY, KITE_API_SECRET)
-    
-    kite_manager = st.session_state.kite_manager
+    kite_manager = get_shared_kite_manager()
     
     # Simple login
     if not kite_manager.is_authenticated:
@@ -4023,8 +4046,52 @@ if __name__ == "__main__":
                 </div>
                 """, unsafe_allow_html=True)
     
-        # Kite Connect authentication (sidebar)
-        data_manager.kite_manager.render_sidebar_auth()
+        # ---------------- Kite Connect login (sidebar) ----------------
+        kite_mgr = data_manager.kite_manager
+        st.sidebar.header("🔐 Kite Connect")
+
+        if not KITECONNECT_AVAILABLE:
+            st.sidebar.error("kiteconnect library not installed (pip install kiteconnect)")
+        else:
+            if not (kite_mgr.api_key and kite_mgr.api_secret):
+                st.sidebar.warning("KITE_API_KEY / KITE_API_SECRET not set in environment or secrets. Enter them below (kept only in this session).")
+                _k = st.sidebar.text_input("API Key", key="kite_api_key_input")
+                _s = st.sidebar.text_input("API Secret", type="password", key="kite_api_secret_input")
+                if _k and _s:
+                    st.session_state["kite_api_key_override"] = _k.strip()
+                    st.session_state["kite_api_secret_override"] = _s.strip()
+                    kite_mgr.set_credentials(_k.strip(), _s.strip())
+
+            if kite_mgr.is_authenticated:
+                _who = st.session_state.get("kite_user_name", "")
+                st.sidebar.success(f"✅ Connected{(' as ' + _who) if _who else ''}")
+                if st.sidebar.button("Disconnect", key="kite_disconnect_btn"):
+                    kite_mgr.logout()
+                    st.rerun()
+            else:
+                st.sidebar.markdown("<div style='background:#fef9e1;padding:10px;border-radius:8px;'>Not authenticated</div>", unsafe_allow_html=True)
+                _login_url = kite_mgr.get_login_url()
+                if _login_url:
+                    st.sidebar.markdown(f"🔗 [Login to Kite Connect]({_login_url})")
+                st.sidebar.caption("After login, copy the request_token (or the whole redirect URL) and paste below. It works only once and expires in a few minutes.")
+                _rt = st.sidebar.text_input("Request Token", type="password", key="kite_request_token_input")
+                if st.sidebar.button("Authenticate", type="primary", key="kite_auth_btn"):
+                    ok, msg = kite_mgr.connect_with_request_token(_rt)
+                    if ok:
+                        st.sidebar.success(msg)
+                        st.rerun()
+                    else:
+                        st.sidebar.error(msg)
+
+                with st.sidebar.expander("Already have an access token?"):
+                    _at = st.text_input("Access Token", type="password", key="kite_access_token_input")
+                    if st.button("Connect with token", key="kite_token_btn"):
+                        ok, msg = kite_mgr.connect_with_access_token((_at or "").strip())
+                        if ok:
+                            st.success(msg)
+                            st.rerun()
+                        else:
+                            st.error(msg)
         st.sidebar.markdown("---")
 
         # Sidebar with Strategy Performance
@@ -4826,109 +4893,107 @@ if __name__ == "__main__":
             with tabs[8]:
                 st.subheader("📈 Kite Connect Live Charts")
             
-                # Check Kite authentication status
+                _kite_ready = True
                 if not KITECONNECT_AVAILABLE:
                     st.error("❌ Kite Connect library not available. Please install: pip install kiteconnect")
-                    raise _KiteTabSkip()
-            
-                if not data_manager.kite_manager.is_authenticated:
+                    _kite_ready = False
+                elif not data_manager.kite_manager.is_authenticated:
                     st.warning("⚠️ Kite Connect not authenticated. Please authenticate in the sidebar.")
-                    raise _KiteTabSkip()
-            
-                # Simple chart interface
-                st.info("🎯 Kite Connect Live Charts - Real-time NSE data")
-            
-                col1, col2 = st.columns(2)
-                with col1:
-                    selected_index = st.selectbox("Select Index", ["NIFTY 50", "BANKNIFTY", "FINNIFTY"], key="kite_index_select")
-                with col2:
-                    interval = st.selectbox("Interval", ["minute", "5minute", "15minute", "30minute", "hour"], key="kite_interval_select")
-            
-                days_back = st.slider("Days Back", 1, 30, 7, key="kite_days_slider")
-            
-                if st.button("📊 Load Chart", type="primary", key="load_kite_chart_btn"):
-                    try:
-                        # Map symbols to NSE tokens (approximate - may need actual instrument tokens)
-                        token_map = {
-                            "NIFTY 50": 256265,
-                            "BANKNIFTY": 260105,
-                            "FINNIFTY": 257801
-                        }
-                    
-                        token = token_map.get(selected_index)
-                        if token:
-                            with st.spinner(f"Fetching data for {selected_index}..."):
-                                # Get historical data
-                                from_date = datetime.now().date() - pd.Timedelta(days=days_back)
-                                to_date = datetime.now().date()
-                            
-                                data = data_manager.kite_manager.get_live_data(token, interval, from_date, to_date)
-                            
-                                if data is not None and len(data) > 0:
-                                    # Create candlestick chart
-                                    fig = go.Figure(data=[go.Candlestick(
-                                        x=data.index,
-                                        open=data['open'],
-                                        high=data['high'],
-                                        low=data['low'],
-                                        close=data['close'],
-                                        name='Price'
-                                    )])
-                                
-                                    # Add EMAs
-                                    data['EMA20'] = ema(data['close'], 20)
-                                    data['EMA50'] = ema(data['close'], 50)
-                                
-                                    fig.add_trace(go.Scatter(
-                                        x=data.index,
-                                        y=data['EMA20'],
-                                        mode='lines',
-                                        name='EMA20',
-                                        line=dict(color='orange', width=1)
-                                    ))
-                                
-                                    fig.add_trace(go.Scatter(
-                                        x=data.index,
-                                        y=data['EMA50'],
-                                        mode='lines',
-                                        name='EMA50',
-                                        line=dict(color='blue', width=1)
-                                    ))
-                                
-                                    fig.update_layout(
-                                        title=f'{selected_index} Live Chart',
-                                        xaxis_title='Time',
-                                        yaxis_title='Price',
-                                        height=600,
-                                        template='plotly_dark',
-                                        showlegend=True
-                                    )
-                                
-                                    st.plotly_chart(fig, use_container_width=True)
-                                
-                                    # Show current stats
-                                    current_price = data['close'].iloc[-1]
-                                    prev_close = data['close'].iloc[-2] if len(data) > 1 else current_price
-                                    change = current_price - prev_close
-                                    change_percent = (change / prev_close) * 100
-                                
-                                    cols = st.columns(4)
-                                    cols[0].metric("Current Price", f"₹{current_price:.2f}")
-                                    cols[1].metric("Change", f"₹{change:+.2f}")
-                                    cols[2].metric("Change %", f"{change_percent:+.2f}%")
-                                    cols[3].metric("Volume", f"{data['volume'].iloc[-1]:,.0f}")
-                                else:
-                                    st.error("❌ Could not fetch data. Check Kite Connect permissions.")
-                        else:
-                            st.error("Invalid index selection")
-                        
-                    except Exception as e:
-                        st.error(f"Error loading chart: {str(e)}")
-                        st.info("Note: Kite Connect requires proper authentication and API permissions.")
+                    _kite_ready = False
 
-            # Tab 10: Market Footprint & Volume Profile
-        except _KiteTabSkip:
-            pass
+                if _kite_ready:
+                    # Simple chart interface
+                    st.info("🎯 Kite Connect Live Charts - Real-time NSE data")
+            
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        selected_index = st.selectbox("Select Index", ["NIFTY 50", "BANKNIFTY", "FINNIFTY"], key="kite_index_select")
+                    with col2:
+                        interval = st.selectbox("Interval", ["minute", "5minute", "15minute", "30minute", "hour"], key="kite_interval_select")
+            
+                    days_back = st.slider("Days Back", 1, 30, 7, key="kite_days_slider")
+            
+                    if st.button("📊 Load Chart", type="primary", key="load_kite_chart_btn"):
+                        try:
+                            # Map symbols to NSE tokens (approximate - may need actual instrument tokens)
+                            token_map = {
+                                "NIFTY 50": 256265,
+                                "BANKNIFTY": 260105,
+                                "FINNIFTY": 257801
+                            }
+                    
+                            token = token_map.get(selected_index)
+                            if token:
+                                with st.spinner(f"Fetching data for {selected_index}..."):
+                                    # Get historical data
+                                    from_date = datetime.now().date() - pd.Timedelta(days=days_back)
+                                    to_date = datetime.now().date()
+                            
+                                    data = data_manager.kite_manager.get_live_data(token, interval, from_date, to_date)
+                            
+                                    if data is not None and len(data) > 0:
+                                        # Create candlestick chart
+                                        fig = go.Figure(data=[go.Candlestick(
+                                            x=data.index,
+                                            open=data['open'],
+                                            high=data['high'],
+                                            low=data['low'],
+                                            close=data['close'],
+                                            name='Price'
+                                        )])
+                                
+                                        # Add EMAs
+                                        data['EMA20'] = ema(data['close'], 20)
+                                        data['EMA50'] = ema(data['close'], 50)
+                                
+                                        fig.add_trace(go.Scatter(
+                                            x=data.index,
+                                            y=data['EMA20'],
+                                            mode='lines',
+                                            name='EMA20',
+                                            line=dict(color='orange', width=1)
+                                        ))
+                                
+                                        fig.add_trace(go.Scatter(
+                                            x=data.index,
+                                            y=data['EMA50'],
+                                            mode='lines',
+                                            name='EMA50',
+                                            line=dict(color='blue', width=1)
+                                        ))
+                                
+                                        fig.update_layout(
+                                            title=f'{selected_index} Live Chart',
+                                            xaxis_title='Time',
+                                            yaxis_title='Price',
+                                            height=600,
+                                            template='plotly_dark',
+                                            showlegend=True
+                                        )
+                                
+                                        st.plotly_chart(fig, use_container_width=True)
+                                
+                                        # Show current stats
+                                        current_price = data['close'].iloc[-1]
+                                        prev_close = data['close'].iloc[-2] if len(data) > 1 else current_price
+                                        change = current_price - prev_close
+                                        change_percent = (change / prev_close) * 100
+                                
+                                        cols = st.columns(4)
+                                        cols[0].metric("Current Price", f"₹{current_price:.2f}")
+                                        cols[1].metric("Change", f"₹{change:+.2f}")
+                                        cols[2].metric("Change %", f"{change_percent:+.2f}%")
+                                        cols[3].metric("Volume", f"{data['volume'].iloc[-1]:,.0f}")
+                                    else:
+                                        st.error("❌ Could not fetch data. Check Kite Connect permissions.")
+                            else:
+                                st.error("Invalid index selection")
+                        
+                        except Exception as e:
+                            st.error(f"Error loading chart: {str(e)}")
+                            st.info("Note: Kite Connect requires proper authentication and API permissions.")
+
+                # Tab 10: Market Footprint & Volume Profile
         except Exception as _tab_e:
             with tabs[8]:
                 st.error(f"Error rendering 'Kite Live Charts' tab: {_tab_e}")
