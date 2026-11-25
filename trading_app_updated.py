@@ -1079,7 +1079,7 @@ def is_peak_market_hours():
     """Check if current time is during peak market hours (9:30 AM - 2:30 PM)"""
     n = now_indian()
     try:
-        peak_start = IND_TZ.localize(datetime.combine(n.date(), dt_time(9:30, 0)))
+        peak_start = IND_TZ.localize(datetime.combine(n.date(), dt_time(10, 0)))
         peak_end = IND_TZ.localize(datetime.combine(n.date(), dt_time(15, 0)))
         return peak_start <= n <= peak_end
     except Exception:
