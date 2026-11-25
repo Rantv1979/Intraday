@@ -272,6 +272,17 @@ NIFTY_MIDCAP_150 = [
 
 # --- BEGIN: Static Universe Sanitizer (Safe / No yfinance calls) ---
 import re as _re
+# Renamed / merged tickers that no longer return data under the old symbol.
+TICKER_ALIASES = {
+    "TATAMOTORS": "TMPV",      # Oct 2025 demerger: listed entity now trades as TMPV
+    "VEDANTA": "VEDL",
+    "MINDTREE": "LTIM",
+    "MOTHERSUMI": "MOTHERSON",
+    "IBULHSGFIN": "SAMMAANCAP",
+    "SRTRANSFIN": "SHRIRAMFIN",
+    "L&TFH": "LTF",
+}
+
 def _clean_list(lst):
     clean = []
     removed = []
@@ -279,9 +290,9 @@ def _clean_list(lst):
         if not isinstance(s, str):
             continue
         t = s.strip().upper()
-        if not t.endswith(".NS"):
-            t = t.replace(" ", "").upper() + ".NS"
-        if _re.match(r"^[A-Z0-9\.\-]+$", t) and "&" not in t and "#" not in t and "@" not in t:
+        base = t[:-3] if t.endswith(".NS") else t.replace(" ", "")
+        t = TICKER_ALIASES.get(base, base) + ".NS"
+        if _re.match(r"^[A-Z0-9\.\-&]+$", t):
             clean.append(t)
         else:
             removed.append(t)
@@ -2075,8 +2086,11 @@ class EnhancedDataManager:
         self.portfolio_optimizer = PortfolioOptimizer()
         self.database = TradeDatabase()
         self.signal_filter = SignalQualityFilter()
-        self.kite_manager = get_shared_kite_manager()
         self.backtest_engine = RealBacktestEngine()
+
+    @property
+    def kite_manager(self):
+        return get_shared_kite_manager()
 
     def _data_mode(self):
         m = st.session_state.get("data_source_select", "Auto (Kite, Yahoo fallback)")
@@ -3501,6 +3515,7 @@ class MultiStrategyIntradayTrader:
         from collections import Counter
         diag = Counter()
         reject_reasons = Counter()
+        failed_symbols = []
         
         # Determine which universe to scan
         if universe == "Nifty 50":
@@ -3539,10 +3554,13 @@ class MultiStrategyIntradayTrader:
                 if data is None or len(data) < 30:
                     diag["no/short data"] += 1
                     continue
+                if bool(getattr(data, "attrs", {}).get("is_demo", False)):
+                    # synthetic placeholder data: random prices -> fake signals. Skip the stock entirely.
+                    diag["skipped: no live data"] += 1
+                    failed_symbols.append(symbol)
+                    continue
                 diag["symbols scanned"] += 1
                 diag[f"data source: {getattr(data, 'attrs', {}).get('source', '?')}"] += 1
-                if bool(getattr(data, "attrs", {}).get("is_demo", False)):
-                    diag["synthetic demo data (live feed failed)"] += 1
                 
                 # Generate high accuracy signals when enabled
                 if use_high_accuracy:
@@ -3571,7 +3589,21 @@ class MultiStrategyIntradayTrader:
             st.info(f"📊 Filtered {len(signals)} → {len(filtered_signals)} high-quality signals")
             signals = filtered_signals
         diag["final signals"] = len(signals)
-        self.last_scan_diag = {"funnel": dict(diag), "rejections": dict(reject_reasons)}
+        km = self.data_manager.kite_manager
+        failed_detail = []
+        for sym in failed_symbols[:12]:
+            if km.is_authenticated and km.get_instrument_token(sym) is None:
+                failed_detail.append(f"{sym} (not listed on Kite - ticker may be renamed)")
+            else:
+                failed_detail.append(sym)
+        self.last_scan_diag = {
+            "funnel": dict(diag), "rejections": dict(reject_reasons),
+            "failed_symbols": failed_detail,
+            "kite_status": ("connected" if km.is_authenticated else "NOT connected") +
+                           (f" | last error: {km.last_error[:150]}" if km.last_error else ""),
+            "yahoo_ok": bool(YF_LIVE_DATA_OK),
+            "data_mode": self.data_manager._data_mode(),
+        }
         
         # Sort by score and confidence
         signals.sort(key=lambda x: (x.get("score", 0), x.get("confidence", 0)), reverse=True)
@@ -4530,7 +4562,15 @@ if __name__ == "__main__":
                         )
                     _d = getattr(trader, "last_scan_diag", None)
                     if _d:
-                        with st.expander("🔎 Scan diagnostics (why signals were / weren't produced)", expanded=not signals):
+                        _nolive = _d["funnel"].get("skipped: no live data", 0)
+                        if _nolive:
+                            _tot = _nolive + _d["funnel"].get("symbols scanned", 0)
+                            st.error(f"⛔ {_nolive} of {_tot} stocks had NO live data and were skipped (never traded). "
+                                     f"Kite: {_d['kite_status']} | Yahoo: {'OK' if _d['yahoo_ok'] else 'failing/blocked'} | "
+                                     f"Source mode: {_d['data_mode']}. Fix the data feed first - signals on synthetic prices are meaningless.")
+                        with st.expander("🔎 Scan diagnostics (why signals were / weren't produced)", expanded=True):
+                            if _d.get("failed_symbols"):
+                                st.write("**Stocks with no data (sample)**", _d["failed_symbols"])
                             st.write("**Funnel**", _d["funnel"])
                             if _d["rejections"]:
                                 st.write("**Rejected by quality filter**", _d["rejections"])
