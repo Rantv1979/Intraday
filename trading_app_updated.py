@@ -200,6 +200,7 @@ MAX_STOCK_TRADES = 10
 MAX_AUTO_TRADES = 10
 
 SIGNAL_REFRESH_MS = 30000
+AUTO_EXEC_MIN_QUALITY = 65  # quality_score gate for auto-execution (80 was almost unreachable)
 PRICE_REFRESH_MS = 30000
 
 MARKET_OPTIONS = ["CASH"]
@@ -2091,8 +2092,8 @@ class EnhancedDataManager:
         # Neutral (0) fails both the `== 1` and `== -1` checks, so a missing
         # confirmation correctly blocks the signal instead of faking one.
         try:
-            htf = self._fetch_yf(symbol, period="7d", interval="1h")
-            if htf is not None and len(htf) > 50:
+            htf = self._fetch_yf(symbol, period="60d", interval="1h")
+            if htf is not None and len(htf) >= 50:
                 if isinstance(htf.columns, pd.MultiIndex):
                     htf.columns = ["_".join(map(str, col)).strip() for col in htf.columns.values]
                 htf = htf.rename(columns={c: c.capitalize() for c in htf.columns})
@@ -3778,7 +3779,10 @@ if __name__ == "__main__":
             st.stop()
 
         # Auto-refresh
-        st_autorefresh(interval=PRICE_REFRESH_MS, key="price_refresh_improved")
+        # A rerun cancels a script that is still running, so a short refresh while auto-execution
+        # is scanning would kill the scan before it finishes. Use a longer interval in that mode.
+        _auto_on = bool(st.session_state.get("auto_execution_toggle", False))
+        st_autorefresh(interval=(180000 if _auto_on else PRICE_REFRESH_MS), key="price_refresh_improved")
 
         # Enhanced UI with Circular Market Mood Gauges
         st.markdown("<h1 style='text-align:center; color: #1e3a8a;'>Rantv Intraday Terminal Pro - ENHANCED</h1>", unsafe_allow_html=True)
@@ -4343,11 +4347,14 @@ if __name__ == "__main__":
                 generate_signals = generate_btn or auto_generate
             
                 if generate_signals:
+                    _scan_cap = max_scan
+                    if auto_generate and not generate_btn:
+                        _scan_cap = min(max_scan, 60) if max_scan else 60  # keep unattended scans short enough to finish
                     with st.spinner(f"Scanning {universe} stocks with enhanced strategies..."):
                         # Use high accuracy when enabled
                         signals = trader.generate_quality_signals(
                             universe, 
-                            max_scan=max_scan,  # Use the corrected max_scan parameter
+                            max_scan=_scan_cap,
                             min_confidence=min_conf_percent/100.0, 
                             min_score=min_score,
                             use_high_accuracy=enable_high_accuracy
@@ -4406,7 +4413,7 @@ if __name__ == "__main__":
                                 st.info("🚀 Manual auto-execution triggered")
                             elif auto_generate:
                                 # Auto-execute only high-quality signals (quality score >= 80)
-                                high_quality_signals = [s for s in signals if s.get('quality_score', 0) >= 80]
+                                high_quality_signals = [s for s in signals if s.get('quality_score', 0) >= AUTO_EXEC_MIN_QUALITY]
                                 if high_quality_signals:
                                     auto_execute_now = True
                                     st.info(f"🚀 Found {len(high_quality_signals)} high-quality signals for auto-execution")
@@ -4422,7 +4429,7 @@ if __name__ == "__main__":
                                 else:
                                     st.warning("No trades were auto-executed. Check trade limits or existing positions.")
                             elif trader.auto_execution and not auto_execute_now:
-                                st.info("Auto-execution is active. High-quality signals (score ≥ 80) will be executed automatically.")
+                                st.info("Auto-execution is active. Signals with quality score ≥ 65 will be executed automatically.")
                     
                         st.subheader("Manual Execution")
                         for idx, s in enumerate(signals[:5]):  # Show only first 5 for better UI
