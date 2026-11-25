@@ -1602,6 +1602,7 @@ class PortfolioOptimizer:
 # NEW: Enhanced Database Manager
 class TradeDatabase:
     def __init__(self, db_url="sqlite:///trading_journal.db"):
+        self.connected = False
         if SQLALCHEMY_AVAILABLE:
             try:
                 # Create data directory if it doesn't exist
@@ -1610,8 +1611,8 @@ class TradeDatabase:
                 db_path = os.path.join('data', 'trading_journal.db')
                 self.db_url = f'sqlite:///{db_path}'
                 self.engine = create_engine(self.db_url)
-                self.create_tables()
                 self.connected = True
+                self.create_tables()
             except Exception as e:
                 logger.error(f"Database connection failed: {e}")
                 self.engine = None
@@ -2219,7 +2220,7 @@ class EnhancedDataManager:
         df["EMA21"] = ema(df["Close"], 21)
         df["EMA50"] = ema(df["Close"], 50)
         df["RSI14"] = rsi(df["Close"], 14).fillna(50)
-        df["ATR"] = calculate_atr(df["High"], df["Low"], df["Close"]).fillna(method="ffill").fillna(0)
+        df["ATR"] = calculate_atr(df["High"], df["Low"], df["Close"]).ffill().fillna(0)
         df["MACD"], df["MACD_Signal"], df["MACD_Hist"] = macd(df["Close"])
         df["BB_Upper"], df["BB_Middle"], df["BB_Lower"] = bollinger_bands(df["Close"])
         df["Stoch_K"], df["Stoch_D"] = stochastic(df["High"], df["Low"], df["Close"])
@@ -2239,7 +2240,7 @@ class EnhancedDataManager:
 
         try:
             df_adx = adx(df["High"], df["Low"], df["Close"], period=14)
-            df["ADX"] = pd.Series(df_adx, index=df.index).fillna(method="ffill").fillna(20)
+            df["ADX"] = pd.Series(df_adx, index=df.index).ffill().fillna(20)
         except Exception:
             df["ADX"] = 20
 
@@ -3516,6 +3517,7 @@ class MultiStrategyIntradayTrader:
         diag = Counter()
         reject_reasons = Counter()
         failed_symbols = []
+        scan_errors = []
         
         # Determine which universe to scan
         if universe == "Nifty 50":
@@ -3573,6 +3575,9 @@ class MultiStrategyIntradayTrader:
                     
             except Exception as e:
                 logger.error(f"Error scanning {symbol}: {e}")
+                diag["errors while scanning"] += 1
+                if len(scan_errors) < 3:
+                    scan_errors.append(f"{symbol}: {type(e).__name__}: {str(e)[:120]}")
                 continue
         
         progress_bar.empty()
@@ -3599,6 +3604,7 @@ class MultiStrategyIntradayTrader:
         self.last_scan_diag = {
             "funnel": dict(diag), "rejections": dict(reject_reasons),
             "failed_symbols": failed_detail,
+            "scan_errors": scan_errors,
             "kite_status": ("connected" if km.is_authenticated else "NOT connected") +
                            (f" | last error: {km.last_error[:150]}" if km.last_error else ""),
             "yahoo_ok": bool(YF_LIVE_DATA_OK),
@@ -4569,6 +4575,8 @@ if __name__ == "__main__":
                                      f"Kite: {_d['kite_status']} | Yahoo: {'OK' if _d['yahoo_ok'] else 'failing/blocked'} | "
                                      f"Source mode: {_d['data_mode']}. Fix the data feed first - signals on synthetic prices are meaningless.")
                         with st.expander("🔎 Scan diagnostics (why signals were / weren't produced)", expanded=True):
+                            if _d.get("scan_errors"):
+                                st.error("Errors while scanning (first 3): " + " | ".join(_d["scan_errors"]))
                             if _d.get("failed_symbols"):
                                 st.write("**Stocks with no data (sample)**", _d["failed_symbols"])
                             st.write("**Funnel**", _d["funnel"])
