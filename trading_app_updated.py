@@ -199,7 +199,7 @@ MAX_DAILY_TRADES = 10
 MAX_STOCK_TRADES = 10
 MAX_AUTO_TRADES = 10
 
-SIGNAL_REFRESH_MS = 150000
+SIGNAL_REFRESH_MS = 30000
 AUTO_EXEC_MIN_QUALITY = 65
 # Backtest win-rate gate. The old 0.65 gate was inconsistent with the engine itself: it simulates a 2R target
 # vs 1R stop (break-even win rate ~33%), and every standard strategy's prior (0.52-0.62) is BELOW 0.65, so
@@ -337,7 +337,27 @@ NIFTY_50, bad1 = _clean_list(NIFTY_50)
 NIFTY_100, bad2 = _clean_list(NIFTY_100)
 NIFTY_MIDCAP_150, bad3 = _clean_list(NIFTY_MIDCAP_150)
 
-ALL_STOCKS = list(dict.fromkeys(NIFTY_50 + NIFTY_100 + NIFTY_MIDCAP_150))
+# NSE F&O stocks (218 stocks, list as of 24 Nov 2026). F&O stocks are the most liquid names, which is what
+# intraday strategies need. The list changes only when NSE adds/removes contracts.
+_FNO_STATIC = """360ONE ABB ABCAPITAL ACUTAAS ADANIENSOL ADANIENT ADANIGREEN ADANIPORTS ADANIPOWER ALKEM AMBER AMBUJACEM
+ANANDRATHI ANGELONE APARINDS APLAPOLLO APOLLOHOSP ASHOKLEY ASIANPAINT ASTRAL ATHERENERG AUBANK AUROPHARMA AXISBANK
+BAJAJ-AUTO BAJAJFINSV BAJFINANCE BANDHANBNK BANKBARODA BANKINDIA BDL BEL BHARATFORG BHARTIARTL BHEL BIOCON BLUESTARCO
+BOSCHLTD BPCL BRITANNIA BSE CAMS CANBK CDSL CGPOWER CHOLAFIN CIPLA COALINDIA COCHINSHIP COFORGE COLPAL CONCOR COROMANDEL
+CROMPTON CUB CUMMINSIND DABUR DATAPATTNS DELHIVERY DIVISLAB DIXON DLF DMART DRREDDY EICHERMOT ENRIN ETERNAL FEDERALBNK
+FORCEMOT FORTIS GAIL GLENMARK GMRAIRPORT GODFRYPHLP GODREJCP GODREJPROP GRASIM GVT&D HAL HAVELLS HCLTECH HDFCAMC HDFCBANK
+HDFCLIFE HEROMOTOCO HINDALCO HINDPETRO HINDUNILVR HINDZINC HYUNDAI ICICIBANK ICICIGI ICICILIFE IDEA IDFCFIRSTB INDHOTEL
+INDIANB INDIGO INDUSINDBK INDUSTOWER INFY INOXWIND IOC IRFC ITC JINDALSTEL JIOFIN JSWENERGY JSWSTEEL JUBLFOOD KALYANKJIL
+KARURVYSYA KAYNES KEI KFINTECH KOTAKBANK KPITTECH LAURUSLABS LICHSGFIN LICI LODHA LT LTF LTM LUPIN M&M MAHABANK MANAPPURAM
+MANKIND MARICO MARUTI MAXHEALTH MAZDOCK MCX MFSL MOTHERSON MOTILALOFS MPHASIS MUTHOOTFIN NAM-INDIA NATIONALUM NAUKRI
+NAVINFLUOR NBCC NESTLEIND NHPC NMDC NTPC NYKAA OBEROIRLTY OFSS OIL ONGC PAGEIND PATANJALI PAYTM PERSISTENT PETRONET PFC
+PGEL PHOENIXLTD PIDILITIND PIIND PNB PNBHOUSING POLICYBZR POLYCAB POWERGRID POWERINDIA PREMIERENE PRESTIGE RADICO RBLBANK
+RECLTD RELIANCE RVNL SAGILITY SAIL SBICARD SBILIFE SBIN SHREECEM SHRIRAMFIN SIEMENS SOLARINDS SONACOMS SRF SUNPHARMA
+SUPREMEIND SUZLON SWIGGY SYRMA TATACONSUM TATAELXSI TATAPOWER TATASTEEL TCS TECHM TIINDIA TITAN TMPV TORNTPHARM TRENT
+TVSMOTOR UJJIVANSFB ULTRACEMCO UNIONBANK UNITDSPR UNOMINDA UPL VBL VEDL VMM VOLTAS WAAREEENER WIPRO YESBANK ZYDUSLIFE""".split()
+FNO_STOCKS, _bad_fno = _clean_list(_FNO_STATIC)
+
+# "All Stocks" = F&O first (most liquid), then the rest of Nifty 100, then Midcap 150
+ALL_STOCKS = list(dict.fromkeys(FNO_STOCKS + NIFTY_50 + NIFTY_100 + NIFTY_MIDCAP_150))
 
 _removed = bad1 + bad2 + bad3
 if _removed:
@@ -762,6 +782,19 @@ class KiteConnectManager:
         st.session_state["kite_instruments"] = self._instruments
         return self._instruments
 
+    def cached_last_price(self, symbol, max_age=90):
+        """Last close from any recently fetched candle frame (no extra API call)."""
+        try:
+            token = self.get_instrument_token(symbol)
+            best = None
+            for (tok, ki, _d), (ts, df) in self._candle_cache.items():
+                if tok == token and ki != "60minute" and time.time() - ts <= max_age and len(df):
+                    if best is None or ts > best[0]:
+                        best = (ts, float(df["Close"].iloc[-1]))
+            return best[1] if best else None
+        except Exception:
+            return None
+
     def get_instrument_token(self, symbol):
         if symbol in self.KITE_INDEX_TOKENS:
             return self.KITE_INDEX_TOKENS[symbol]
@@ -1079,8 +1112,8 @@ def is_peak_market_hours():
     """Check if current time is during peak market hours (9:30 AM - 2:30 PM)"""
     n = now_indian()
     try:
-        peak_start = IND_TZ.localize(datetime.combine(n.date(), dt_time(9, 0)))
-        peak_end = IND_TZ.localize(datetime.combine(n.date(), dt_time(15, 0)))
+        peak_start = IND_TZ.localize(datetime.combine(n.date(), dt_time(10, 0)))
+        peak_end = IND_TZ.localize(datetime.combine(n.date(), dt_time(14, 0)))
         return peak_start <= n <= peak_end
     except Exception:
         return True  # Default to True during market hours
@@ -1327,8 +1360,11 @@ class SignalQualityFilter:
                 if atr_percent > 3.0:
                     reject("too volatile (ATR > 3%)"); continue
 
+                if signal.get("rsi") is None:
+                    signal["rsi"] = float(rsi_val)
                 signal["quality_score"] = SignalQualityFilter.calculate_quality_score(signal, data)
                 signal["volume_ratio"] = volume_ratio
+                signal["data_source"] = getattr(data, "attrs", {}).get("source")
                 signal["atr_percent"] = atr_percent
                 signal["trend_aligned"] = not is_reversion
                 filtered.append(signal)
@@ -1628,104 +1664,161 @@ class PortfolioOptimizer:
             return "OTHER"
 
 # NEW: Enhanced Database Manager
+_DB_READY = set()   # process-wide: tables/migrations are created once per DB url
+
 class TradeDatabase:
-    def __init__(self, db_url="sqlite:///trading_journal.db"):
+    """Persistent trade journal.
+    - Default: SQLite file (path from env/secret TRADING_DB_PATH, else data/trading_journal.db).
+    - Optional: any SQLAlchemy URL in env/secret DATABASE_URL (e.g. Postgres/Supabase) for hosts whose
+      local disk is wiped on every reboot/redeploy (Streamlit Cloud).
+    Every trade is written when it OPENS and updated when it CLOSES, so a page refresh loses nothing."""
+
+    COLS = ["trade_id", "symbol", "action", "quantity", "entry_price", "exit_price", "stop_loss", "target",
+            "pnl", "entry_time", "exit_time", "strategy", "auto_trade", "status", "exit_reason",
+            "confidence", "win_probability", "quality_score", "risk_reward", "signal_score", "rsi",
+            "volume_ratio", "data_source", "universe", "trade_date"]
+    EXTRA_COLS = {"exit_reason": "TEXT", "confidence": "REAL", "win_probability": "REAL",
+                  "quality_score": "REAL", "risk_reward": "REAL", "signal_score": "REAL", "rsi": "REAL",
+                  "volume_ratio": "REAL", "data_source": "TEXT", "universe": "TEXT", "trade_date": "TEXT"}
+
+    def __init__(self, db_url=None):
         self.connected = False
-        if SQLALCHEMY_AVAILABLE:
-            try:
-                # Create data directory if it doesn't exist
-                os.makedirs('data', exist_ok=True)
-                # Use absolute path
-                db_path = os.path.join('data', 'trading_journal.db')
-                self.db_url = f'sqlite:///{db_path}'
-                self.engine = create_engine(self.db_url)
-                self.connected = True
+        self.engine = None
+        self.backend = "sqlite"
+        self.location = ""
+        self.last_error = ""
+        if not SQLALCHEMY_AVAILABLE:
+            self.last_error = "sqlalchemy not installed"
+            return
+        try:
+            url = db_url or _get_secret("DATABASE_URL")
+            if url:
+                if url.startswith("postgres://"):
+                    url = url.replace("postgres://", "postgresql://", 1)
+                self.backend = url.split(":", 1)[0]
+                self.location = self.backend + " (external database)"
+            else:
+                path = _get_secret("TRADING_DB_PATH") or os.path.join("data", "trading_journal.db")
+                os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+                url = f"sqlite:///{path}"
+                self.location = os.path.abspath(path)
+            self.db_url = url
+            self.engine = create_engine(url, pool_pre_ping=True)
+            self.connected = True
+            if url not in _DB_READY:
                 self.create_tables()
-            except Exception as e:
-                logger.error(f"Database connection failed: {e}")
-                self.engine = None
-                self.connected = False
-        else:
+                _DB_READY.add(url)
+        except Exception as e:
+            logger.error(f"Database connection failed: {e}")
+            self.last_error = str(e)
             self.engine = None
             self.connected = False
-    
+
+    # ------------------------------------------------------------------ schema
     def create_tables(self):
-        """Create necessary database tables"""
         if not self.connected:
             return
-            
         try:
-            with self.engine.connect() as conn:
-                # Trades table
+            with self.engine.begin() as conn:
                 conn.execute(text("""
                     CREATE TABLE IF NOT EXISTS trades (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        trade_id TEXT UNIQUE,
-                        symbol TEXT,
-                        action TEXT,
-                        quantity INTEGER,
-                        entry_price REAL,
-                        exit_price REAL,
-                        stop_loss REAL,
-                        target REAL,
-                        pnl REAL,
-                        entry_time TIMESTAMP,
-                        exit_time TIMESTAMP,
-                        strategy TEXT,
-                        auto_trade BOOLEAN,
-                        status TEXT,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """))
-                
-                # Market regime history
-                conn.execute(text("""
-                    CREATE TABLE IF NOT EXISTS market_regimes (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        regime TEXT,
-                        timestamp TIMESTAMP,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """))
-                
-                # Strategy performance
-                conn.execute(text("""
-                    CREATE TABLE IF NOT EXISTS strategy_performance (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        strategy TEXT,
-                        signals INTEGER,
-                        trades INTEGER,
-                        wins INTEGER,
-                        pnl REAL,
-                        date DATE,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """))
-                
-                conn.commit()
-                logger.info("Database tables created successfully")
+                        trade_id TEXT PRIMARY KEY,
+                        symbol TEXT, action TEXT, quantity INTEGER,
+                        entry_price REAL, exit_price REAL, stop_loss REAL, target REAL, pnl REAL,
+                        entry_time TEXT, exit_time TEXT, strategy TEXT, auto_trade BOOLEAN, status TEXT
+                    )"""))
+            # add any missing columns (older databases created by previous versions of this app)
+            from sqlalchemy import inspect as _sa_inspect
+            have = {c["name"] for c in _sa_inspect(self.engine).get_columns("trades")}
+            with self.engine.begin() as conn:
+                for col, typ in self.EXTRA_COLS.items():
+                    if col not in have:
+                        conn.execute(text(f"ALTER TABLE trades ADD COLUMN {col} {typ}"))
+            logger.info("Database tables ready")
         except Exception as e:
             logger.error(f"Error creating tables: {e}")
-    
-    def log_trade(self, trade_data):
-        """Log trade to database"""
+            self.last_error = str(e)
+
+    # ------------------------------------------------------------------ helpers
+    @staticmethod
+    def _norm(v):
+        if v is None:
+            return None
+        try:
+            if isinstance(v, float) and v != v:   # NaN
+                return None
+        except Exception:
+            pass
+        if isinstance(v, (datetime,)):
+            return v.isoformat(sep=" ", timespec="seconds")
+        if hasattr(v, "isoformat") and not isinstance(v, str):
+            try:
+                return v.isoformat(sep=" ", timespec="seconds")
+            except TypeError:
+                return v.isoformat()
+        if isinstance(v, (np.integer,)):
+            return int(v)
+        if isinstance(v, (np.floating,)):
+            return float(v)
+        if isinstance(v, (np.bool_,)):
+            return bool(v)
+        return v
+
+    # ------------------------------------------------------------------ writes
+    def upsert_trade(self, d):
+        """Insert a trade, or update the existing row with the same trade_id (only fields that are set)."""
         if not self.connected:
-            return
-            
+            return False
+        try:
+            row = {c: self._norm(d.get(c)) for c in self.COLS}
+            if not row.get("trade_id"):
+                return False
+            if not row.get("trade_date") and row.get("entry_time"):
+                row["trade_date"] = str(row["entry_time"])[:10]
+            if row.get("auto_trade") is not None:
+                row["auto_trade"] = bool(row["auto_trade"])
+            with self.engine.begin() as conn:
+                sets = [c for c in self.COLS if c != "trade_id" and row.get(c) is not None]
+                res = conn.execute(text(
+                    "UPDATE trades SET " + ", ".join(f"{c} = :{c}" for c in sets) + " WHERE trade_id = :trade_id"
+                ), {c: row[c] for c in sets + ["trade_id"]})
+                if res.rowcount == 0:
+                    cols = [c for c in self.COLS if row.get(c) is not None or c == "trade_id"]
+                    conn.execute(text(
+                        "INSERT INTO trades (" + ", ".join(cols) + ") VALUES (" + ", ".join(f":{c}" for c in cols) + ")"
+                    ), {c: row[c] for c in cols})
+            return True
+        except Exception as e:
+            logger.error(f"Error saving trade: {e}")
+            self.last_error = str(e)
+            return False
+
+    def log_trade(self, trade_data):          # backwards-compatible name
+        return self.upsert_trade(trade_data)
+
+    def import_trades(self, df):
+        """Merge a previously exported CSV (matched by trade_id). Returns number of rows imported."""
+        n = 0
+        for rec in df.to_dict("records"):
+            if self.upsert_trade(rec):
+                n += 1
+        return n
+
+    # ------------------------------------------------------------------ reads
+    def load_trades(self):
+        if not self.connected:
+            return pd.DataFrame(columns=self.COLS)
         try:
             with self.engine.connect() as conn:
-                conn.execute(text("""
-                    INSERT OR REPLACE INTO trades 
-                    (trade_id, symbol, action, quantity, entry_price, exit_price, 
-                     stop_loss, target, pnl, entry_time, exit_time, strategy, 
-                     auto_trade, status)
-                    VALUES (:trade_id, :symbol, :action, :quantity, :entry_price, 
-                            :exit_price, :stop_loss, :target, :pnl, :entry_time, 
-                            :exit_time, :strategy, :auto_trade, :status)
-                """), trade_data)
-                conn.commit()
+                df = pd.read_sql(text("SELECT * FROM trades"), conn)
+            for c in self.COLS:
+                if c not in df.columns:
+                    df[c] = None
+            return df
         except Exception as e:
-            logger.error(f"Error logging trade: {e}")
+            logger.error(f"Error loading trades: {e}")
+            self.last_error = str(e)
+            return pd.DataFrame(columns=self.COLS)
 
 # Enhanced Utilities
 def now_indian():
@@ -1846,11 +1939,17 @@ def calculate_support_resistance_advanced(high, low, close, period=20):
         if ln < period * 2 + 1:
             return {"support": float(close.iloc[-1] * 0.98), "resistance": float(close.iloc[-1] * 1.02),
                     "support_levels": [], "resistance_levels": []}
-        for i in range(period, ln - period):
-            if high.iloc[i] >= high.iloc[i - period:i + period + 1].max():
-                resistance.append(float(high.iloc[i]))
-            if low.iloc[i] <= low.iloc[i - period:i + period + 1].min():
-                support.append(float(low.iloc[i]))
+        # Vectorised pivot detection (same result as the old per-bar loop, ~50x faster: the walk-forward
+        # backtest calls this thousands of times per scan, which made F&O-size scans take minutes).
+        win = 2 * period + 1
+        hv = np.asarray(high, dtype=float)
+        lv = np.asarray(low, dtype=float)
+        hmax = pd.Series(hv).rolling(win, center=True).max().to_numpy()
+        lmin = pd.Series(lv).rolling(win, center=True).min().to_numpy()
+        valid = np.zeros(ln, dtype=bool)
+        valid[period:ln - period] = True
+        resistance = [float(x) for x in hv[valid & (hv >= hmax)]]
+        support = [float(x) for x in lv[valid & (lv <= lmin)]]
         recent_res = sorted(resistance)[-3:] if resistance else [float(close.iloc[-1] * 1.02)]
         recent_sup = sorted(support)[:3] if support else [float(close.iloc[-1] * 0.98)]
         return {"support": float(np.mean(recent_sup)), "resistance": float(np.mean(recent_res)),
@@ -2160,6 +2259,10 @@ class EnhancedDataManager:
             cached = self.price_cache[key]
             if now_ts - cached["ts"] < 2:
                 return cached["price"]
+        _cp = self.kite_manager.cached_last_price(symbol) if self._data_mode() != "yahoo" else None
+        if _cp:
+            self.price_cache[key] = {"price": round(_cp, 2), "ts": now_ts}
+            return round(_cp, 2)
         kdf = self._kite_candles(symbol, "1m", 3)
         if kdf is not None and len(kdf) > 0:
             price = float(kdf["Close"].iloc[-1])
@@ -2194,6 +2297,23 @@ class EnhancedDataManager:
             return pd.DataFrame()
 
     def get_stock_data(self, symbol, interval="15m"):
+        """Indicator-enriched candles with a short cache: one scan asks for the same symbol 5-6 times
+        (signals, filter, accuracy, live price), so recomputing every time wasted ~30% of the scan."""
+        if not hasattr(self, "_df_cache"):
+            self._df_cache = {}
+        key = (symbol, interval, self._data_mode())
+        hit = self._df_cache.get(key)
+        if hit and time.time() - hit[0] < 25:
+            return hit[1].copy()
+        df = self._build_stock_data(symbol, interval)
+        if df is not None and len(df):
+            if len(self._df_cache) > 600:
+                self._df_cache.clear()
+            self._df_cache[key] = (time.time(), df)
+            return df.copy()
+        return df
+
+    def _build_stock_data(self, symbol, interval="15m"):
         # Force 15min timeframe for RSI analysis as requested
         if interval == "15m":
             period = "7d"
@@ -2765,6 +2885,11 @@ class MultiStrategyIntradayTrader:
         self.regime_detector = MarketRegimeDetector()
         self.portfolio_optimizer = PortfolioOptimizer()
         self.backtest_engine = RealBacktestEngine()
+        # Load everything that was saved before (open positions, cash, history) so a page refresh loses nothing
+        try:
+            self.restore_from_db()
+        except Exception as _e:
+            logger.error(f"restore_from_db failed: {_e}")
 
     def reset_daily_counts(self):
         current_date = now_indian().date()
@@ -2772,6 +2897,7 @@ class MultiStrategyIntradayTrader:
             self.daily_trades = 0
             self.stock_trades = 0
             self.auto_trades_count = 0
+            self.auto_close_triggered = False
             self.last_reset = current_date
 
     def can_auto_trade(self):
@@ -2779,7 +2905,8 @@ class MultiStrategyIntradayTrader:
         can_trade = (
             self.auto_trades_count < MAX_AUTO_TRADES and 
             self.daily_trades < MAX_DAILY_TRADES and
-            market_open()
+            market_open() and
+            not should_auto_close()      # no new intraday entries after 15:10 square-off
         )
         return can_trade
 
@@ -2862,7 +2989,7 @@ class MultiStrategyIntradayTrader:
                     total += pos["quantity"] * price
         return total
 
-    def execute_trade(self, symbol, action, quantity, price, stop_loss=None, target=None, win_probability=0.75, auto_trade=False, strategy=None, is_demo_data=False):
+    def execute_trade(self, symbol, action, quantity, price, stop_loss=None, target=None, win_probability=0.75, auto_trade=False, strategy=None, is_demo_data=False, meta=None):
         # SAFETY: never let a trade (paper or real) execute against synthetic/
         # demo price data. Demo data is randomly generated (see
         # create_validated_demo_data) purely so the UI has something to show
@@ -2905,7 +3032,8 @@ class MultiStrategyIntradayTrader:
             "closed_pnl": 0.0,
             "entry_time": now_indian().strftime("%H:%M:%S"),
             "auto_trade": auto_trade,
-            "strategy": strategy
+            "strategy": strategy,
+            "meta": dict(meta or {})
         }
 
         if action == "BUY":
@@ -2927,25 +3055,9 @@ class MultiStrategyIntradayTrader:
         if strategy and strategy in self.strategy_performance:
             self.strategy_performance[strategy]["trades"] += 1
 
-        # NEW: Log trade to database
+        # Persist immediately (survives page refresh / restart)
         try:
-            if self.data_manager.database.connected:
-                self.data_manager.database.log_trade({
-                    "trade_id": trade_id,
-                    "symbol": symbol,
-                    "action": action,
-                    "quantity": int(quantity),
-                    "entry_price": float(price),
-                    "exit_price": None,
-                    "stop_loss": float(stop_loss) if stop_loss else None,
-                    "target": float(target) if target else None,
-                    "pnl": 0.0,
-                    "entry_time": now_indian(),
-                    "exit_time": None,
-                    "strategy": strategy,
-                    "auto_trade": auto_trade,
-                    "status": "OPEN"
-                })
+            self._save_trade(record, status="OPEN")
         except Exception as e:
             logger.error(f"Failed to log trade: {e}")
 
@@ -3081,66 +3193,108 @@ class MultiStrategyIntradayTrader:
             return signals
 
     def update_positions_pnl(self):
-        if should_auto_close() and not self.auto_close_triggered:
+        self.reset_daily_counts()
+        today = now_indian().date()
+        has_open = any(p.get("status") == "OPEN" for p in self.positions.values())
+        if should_auto_close() and has_open:
             self.auto_close_all_positions()
-            self.auto_close_triggered = True
             return
-            
+
         for symbol, pos in list(self.positions.items()):
             if pos.get("status") != "OPEN":
                 continue
             try:
+                ts = pos.get("timestamp")
+                if ts is not None and ts.date() < today:
+                    self._close_stale_position(symbol, pos)   # intraday trade left open from a previous day
+                    continue
                 data = self.data_manager.get_stock_data(symbol, "5m")
-                if data is not None and len(data) > 0:
-                    price = float(data["Close"].iloc[-1])
-                    pos["current_price"] = price
-                    entry = pos["entry_price"]
-                    if pos["action"] == "BUY":
-                        pnl = (price - entry) * pos["quantity"]
-                    else:
-                        pnl = (entry - price) * pos["quantity"]
-                    pos["current_pnl"] = float(pnl)
-                    pos["max_pnl"] = max(pos.get("max_pnl", 0.0), float(pnl))
-                    sl = pos.get("stop_loss")
-                    tg = pos.get("target")
-                    if sl is not None:
-                        if (pos["action"] == "BUY" and price <= sl) or (pos["action"] == "SELL" and price >= sl):
-                            self.close_position(symbol, exit_price=sl)
-                            continue
-                    if tg is not None:
-                        if (pos["action"] == "BUY" and price >= tg) or (pos["action"] == "SELL" and price <= tg):
-                            self.close_position(symbol, exit_price=tg)
-                            continue
+                if data is None or len(data) == 0 or bool(getattr(data, "attrs", {}).get("is_demo", False)):
+                    continue   # never act on synthetic prices
+                price = float(data["Close"].iloc[-1])
+                pos["current_price"] = price
+                entry = pos["entry_price"]
+                if pos["action"] == "BUY":
+                    pnl = (price - entry) * pos["quantity"]
+                else:
+                    pnl = (entry - price) * pos["quantity"]
+                pos["current_pnl"] = float(pnl)
+                pos["max_pnl"] = max(pos.get("max_pnl", 0.0), float(pnl))
+
+                # Look at every 5-minute bar since entry, not just the last price, so a stop/target that was
+                # touched between page refreshes is still detected.
+                hi, lo = price, price
+                try:
+                    cmp_ts = pd.Timestamp(ts)
+                    if getattr(data.index, "tz", None) is None:
+                        cmp_ts = cmp_ts.tz_localize(None) if cmp_ts.tzinfo else cmp_ts
+                    bars = data[data.index > cmp_ts]
+                    if len(bars):
+                        hi = max(hi, float(bars["High"].max()))
+                        lo = min(lo, float(bars["Low"].min()))
+                except Exception:
+                    pass
+                sl, tg = pos.get("stop_loss"), pos.get("target")
+                if pos["action"] == "BUY":
+                    sl_hit = sl is not None and lo <= sl
+                    tg_hit = tg is not None and hi >= tg
+                    sl_exit = min(sl, price) if (sl is not None and price <= sl) else sl
+                else:
+                    sl_hit = sl is not None and hi >= sl
+                    tg_hit = tg is not None and lo <= tg
+                    sl_exit = max(sl, price) if (sl is not None and price >= sl) else sl
+                if sl_hit:      # if both were touched we cannot know the order: assume the stop (conservative)
+                    self.close_position(symbol, exit_price=sl_exit, reason="STOP_LOSS")
+                    continue
+                if tg_hit:
+                    self.close_position(symbol, exit_price=tg, reason="TARGET")
+                    continue
             except Exception:
                 continue
 
+    def _close_stale_position(self, symbol, pos):
+        """Close a position opened on an earlier day at that day's last traded price."""
+        ts = pos.get("timestamp")
+        try:
+            d = self.data_manager.get_stock_data(symbol, "15m")
+            if d is None or len(d) == 0 or bool(getattr(d, "attrs", {}).get("is_demo", False)):
+                return
+            day_mask = np.array([x.date() == ts.date() for x in d.index])
+            day = d[day_mask]
+            if len(day) == 0:
+                return
+            price = float(day["Close"].iloc[-1])
+            eod = IND_TZ.localize(datetime.combine(ts.date(), dt_time(15, 10)))
+            self.close_position(symbol, exit_price=price, reason="EOD_AUTO_CLOSE (app was closed)", exit_time=eod)
+        except Exception as e:
+            logger.error(f"stale close failed for {symbol}: {e}")
+
     def auto_close_all_positions(self):
         for sym in list(self.positions.keys()):
-            self.close_position(sym)
+            self.close_position(sym, reason="EOD_AUTO_CLOSE")
 
-    def close_position(self, symbol, exit_price=None):
+    def close_position(self, symbol, exit_price=None, reason="MANUAL", exit_time=None):
         if symbol not in self.positions:
             return False, "Position not found"
         pos = self.positions[symbol]
         if exit_price is None:
-            try:
-                data = self.data_manager.get_stock_data(symbol, "5m")
-                exit_price = float(data["Close"].iloc[-1]) if data is not None and len(data) > 0 else pos["entry_price"]
-            except Exception:
-                exit_price = pos["entry_price"]
-        
+            exit_price = self._live_close(symbol) or pos.get("current_price") or pos["entry_price"]
+        exit_price = float(exit_price)
+        exit_dt = exit_time or now_indian()
+
         if pos["action"] == "BUY":
             pnl = (exit_price - pos["entry_price"]) * pos["quantity"]
             self.cash += pos["quantity"] * exit_price
         else:
             pnl = (pos["entry_price"] - exit_price) * pos["quantity"]
             self.cash += pos.get("margin_used", 0) + pnl
-        
+
         pos["status"] = "CLOSED"
-        pos["exit_price"] = float(exit_price)
+        pos["exit_price"] = exit_price
         pos["closed_pnl"] = float(pnl)
-        pos["exit_time"] = now_indian()
-        pos["exit_time_str"] = now_indian().strftime("%H:%M:%S")
+        pos["exit_time"] = exit_dt
+        pos["exit_time_str"] = exit_dt.strftime("%H:%M:%S")
+        pos["exit_reason"] = reason
 
         strategy = pos.get("strategy")
         if strategy and strategy in self.strategy_performance:
@@ -3148,25 +3302,9 @@ class MultiStrategyIntradayTrader:
                 self.strategy_performance[strategy]["wins"] += 1
             self.strategy_performance[strategy]["pnl"] += pnl
 
-        # NEW: Update database
+        # Persist the result (updates the row that was written when the trade opened)
         try:
-            if self.data_manager.database.connected:
-                self.data_manager.database.log_trade({
-                    "trade_id": pos["trade_id"],
-                    "symbol": symbol,
-                    "action": pos["action"],
-                    "quantity": pos["quantity"],
-                    "entry_price": pos["entry_price"],
-                    "exit_price": float(exit_price),
-                    "stop_loss": pos.get("stop_loss"),
-                    "target": pos.get("target"),
-                    "pnl": float(pnl),
-                    "entry_time": pos["timestamp"],
-                    "exit_time": now_indian(),
-                    "strategy": strategy,
-                    "auto_trade": pos.get("auto_trade", False),
-                    "status": "CLOSED"
-                })
+            self._save_trade(pos, status="CLOSED", exit_price=exit_price, pnl=pnl, exit_time=exit_dt, exit_reason=reason)
         except Exception as e:
             logger.error(f"Failed to update trade in database: {e}")
 
@@ -3174,7 +3312,122 @@ class MultiStrategyIntradayTrader:
             del self.positions[symbol]
         except Exception:
             pass
-        return True, f"Closed {symbol} @ ₹{exit_price:.2f} | P&L: ₹{pnl:+.2f}"
+        return True, f"Closed {symbol} @ ₹{exit_price:.2f} | P&L: ₹{pnl:+.2f} ({reason})"
+
+    # ------------------------------------------------------------------ persistence helpers
+    def _save_trade(self, pos, status="OPEN", exit_price=None, pnl=None, exit_time=None, exit_reason=None):
+        db = self.data_manager.database
+        if not db.connected:
+            return False
+        m = pos.get("meta") or {}
+        ts = pos.get("timestamp")
+        return db.upsert_trade({
+            "trade_id": pos["trade_id"], "symbol": pos["symbol"], "action": pos["action"],
+            "quantity": int(pos["quantity"]), "entry_price": float(pos["entry_price"]),
+            "exit_price": exit_price, "stop_loss": pos.get("stop_loss"), "target": pos.get("target"),
+            "pnl": float(pnl) if pnl is not None else 0.0,
+            "entry_time": ts, "exit_time": exit_time, "strategy": pos.get("strategy"),
+            "auto_trade": bool(pos.get("auto_trade", False)), "status": status, "exit_reason": exit_reason,
+            "confidence": m.get("confidence"), "win_probability": pos.get("win_probability"),
+            "quality_score": m.get("quality_score"), "risk_reward": m.get("risk_reward"),
+            "signal_score": m.get("signal_score"), "rsi": m.get("rsi"), "volume_ratio": m.get("volume_ratio"),
+            "data_source": m.get("data_source"), "universe": m.get("universe"),
+            "trade_date": ts.strftime("%Y-%m-%d") if ts is not None else None,
+        })
+
+    @staticmethod
+    def _to_ist(v):
+        if v is None or (isinstance(v, float) and v != v):
+            return None
+        t = pd.to_datetime(v, errors="coerce", format="mixed")
+        if t is None or pd.isna(t):
+            return None
+        if t.tzinfo is None:
+            t = t.tz_localize(IND_TZ)
+        else:
+            t = t.tz_convert(IND_TZ)
+        return t.to_pydatetime()
+
+    def restore_from_db(self):
+        """Rebuild positions, trade log, cash, daily counters and strategy stats from the saved journal."""
+        db = self.data_manager.database
+        if not db.connected:
+            return
+        df = db.load_trades()
+        self.positions, self.trade_log = {}, []
+        self.cash = float(self.initial_capital)
+        for k in self.strategy_performance:
+            self.strategy_performance[k].update({"trades": 0, "wins": 0, "pnl": 0.0})
+        today = now_indian().date()
+        self.daily_trades = self.stock_trades = self.auto_trades_count = 0
+        if df is None or df.empty:
+            return
+        df = df.copy()
+        df["_ts"] = df["entry_time"].apply(self._to_ist)
+        df = df[df["_ts"].notna()].sort_values("_ts")
+        for r in df.to_dict("records"):
+            ts = r["_ts"]
+            status = str(r.get("status") or "OPEN").upper()
+            qty = int(r.get("quantity") or 0)
+            entry = float(r.get("entry_price") or 0.0)
+            pnl = float(r.get("pnl") or 0.0)
+            def _f(x):
+                try:
+                    return None if x is None or x != x else float(x)
+                except Exception:
+                    return None
+            rec = {
+                "trade_id": r["trade_id"], "symbol": r["symbol"], "action": r["action"], "quantity": qty,
+                "entry_price": entry, "stop_loss": _f(r.get("stop_loss")), "target": _f(r.get("target")),
+                "timestamp": ts, "status": status, "current_pnl": 0.0, "current_price": entry,
+                "win_probability": _f(r.get("win_probability")) or 0.75,
+                "closed_pnl": pnl if status == "CLOSED" else 0.0,
+                "entry_time": ts.strftime("%H:%M:%S"),
+                "auto_trade": bool(r.get("auto_trade")), "strategy": r.get("strategy") or "Manual",
+                "exit_reason": r.get("exit_reason"),
+                "meta": {k: _f(r.get(k)) for k in ("confidence", "quality_score", "risk_reward", "signal_score", "rsi", "volume_ratio")},
+            }
+            rec["meta"]["data_source"] = r.get("data_source")
+            rec["meta"]["universe"] = r.get("universe")
+            if status == "CLOSED":
+                et = self._to_ist(r.get("exit_time"))
+                rec["exit_price"] = _f(r.get("exit_price")) or entry
+                rec["exit_time"] = et
+                rec["exit_time_str"] = et.strftime("%H:%M:%S") if et else ""
+                self.cash += pnl
+            else:
+                value = qty * entry
+                if rec["action"] == "SELL":
+                    rec["margin_used"] = value * 0.2
+                    self.cash -= rec["margin_used"]
+                else:
+                    self.cash -= value
+                self.positions[rec["symbol"]] = rec
+            self.trade_log.append(rec)
+            strat = rec["strategy"]
+            if strat in self.strategy_performance:
+                sp = self.strategy_performance[strat]
+                sp["trades"] += 1
+                if status == "CLOSED":
+                    sp["pnl"] += pnl
+                    if pnl > 0:
+                        sp["wins"] += 1
+            if ts.date() == today:
+                self.daily_trades += 1
+                self.stock_trades += 1
+                if rec["auto_trade"]:
+                    self.auto_trades_count += 1
+        self.last_reset = today
+
+    def _live_close(self, symbol, interval="5m"):
+        """Latest real close, or None. Never returns synthetic/demo prices."""
+        try:
+            d = self.data_manager.get_stock_data(symbol, interval)
+            if d is None or len(d) == 0 or bool(getattr(d, "attrs", {}).get("is_demo", False)):
+                return None
+            return float(d["Close"].iloc[-1])
+        except Exception:
+            return None
 
     def get_open_positions_data(self):
         self.update_positions_pnl()
@@ -3183,8 +3436,7 @@ class MultiStrategyIntradayTrader:
             if pos.get("status") != "OPEN":
                 continue
             try:
-                data = self.data_manager.get_stock_data(symbol, "5m")
-                price = float(data["Close"].iloc[-1]) if data is not None and len(data) > 0 else pos["entry_price"]
+                price = self._live_close(symbol) or pos.get("current_price") or pos["entry_price"]
                 if pos["action"] == "BUY":
                     pnl = (price - pos["entry_price"]) * pos["quantity"]
                 else:
@@ -3558,6 +3810,8 @@ class MultiStrategyIntradayTrader:
             stocks = NIFTY_100
         elif universe == "Midcap 150":
             stocks = NIFTY_MIDCAP_150
+        elif universe == "F&O Stocks":
+            stocks = FNO_STOCKS
         elif universe == "All Stocks":
             stocks = ALL_STOCKS
         else:
@@ -3702,7 +3956,14 @@ class MultiStrategyIntradayTrader:
                     win_probability=signal.get("win_probability", 0.75),
                     auto_trade=True,
                     strategy=signal.get("strategy"),
-                    is_demo_data=signal.get("is_demo", False)
+                    is_demo_data=signal.get("is_demo", False),
+                    meta={
+                        "confidence": signal.get("confidence"), "quality_score": signal.get("quality_score"),
+                        "risk_reward": signal.get("risk_reward"), "signal_score": signal.get("score"),
+                        "rsi": signal.get("rsi"), "volume_ratio": signal.get("volume_ratio"),
+                        "data_source": signal.get("data_source"),
+                        "universe": st.session_state.get("universe_select"),
+                    }
                 )
                 if success:
                     executed.append(msg)
@@ -4006,7 +4267,7 @@ if __name__ == "__main__":
         # A rerun cancels a script that is still running, so a short refresh while auto-execution
         # is scanning would kill the scan before it finishes. Use a longer interval in that mode.
         _auto_on = bool(st.session_state.get("auto_execution_toggle", False))
-        st_autorefresh(interval=(180000 if _auto_on else PRICE_REFRESH_MS), key="price_refresh_improved")
+        st_autorefresh(interval=(300000 if _auto_on else PRICE_REFRESH_MS), key="price_refresh_improved")
 
         # Enhanced UI with Circular Market Mood Gauges
         st.markdown("<h1 style='text-align:center; color: #1e3a8a;'>Rantv Intraday Terminal Pro - ENHANCED</h1>", unsafe_allow_html=True)
@@ -4039,7 +4300,7 @@ if __name__ == "__main__":
         # NEW: Peak Hours Indicator
         peak_hours = is_peak_market_hours()
         peak_color = "🟢" if peak_hours else "🔴"
-        cols[4].metric("Peak Hours (9:15AM-3PM)", f"{peak_color} {'YES' if peak_hours else 'NO'}")
+        cols[4].metric("Peak Hours (10AM-2PM)", f"{peak_color} {'YES' if peak_hours else 'NO'}")
         
         cols[5].metric("Auto Trades", f"{trader.auto_trades_count}/{MAX_AUTO_TRADES}")
         cols[6].metric("Available Cash", f"₹{trader.cash:,.0f}")
@@ -4370,13 +4631,14 @@ if __name__ == "__main__":
         trader.selected_market = st.sidebar.selectbox("Market Type", MARKET_OPTIONS, key="market_type_select")
         
         # UPDATED: Universe Selection with All Stocks
-        universe = st.sidebar.selectbox("Trading Universe", ["All Stocks", "Nifty 50", "Nifty 100", "Midcap 150"], key="universe_select")
+        universe = st.sidebar.selectbox("Trading Universe", ["F&O Stocks", "All Stocks", "Nifty 50", "Nifty 100", "Midcap 150"], key="universe_select",
+                                        help="F&O Stocks = ~218 liquid NSE derivative stocks (large + mid caps). All Stocks = F&O + Nifty 100 + Midcap 150.")
         
         # NEW: High Accuracy Toggle for All Universes
         enable_high_accuracy = st.sidebar.checkbox("Enable High Accuracy Strategies", value=True, 
                                                   help="Enable high accuracy strategies for all stock universes", key="high_acc_toggle")
         
-        trader.auto_execution = st.sidebar.checkbox("Auto Execution", value=False, key="auto_execution_toggle")
+        trader.auto_execution = st.sidebar.checkbox("Auto Execution", value=True, key="auto_execution_toggle")
         
         # NEW: Enhanced Risk Management Settings
         st.sidebar.subheader("🎯 Enhanced Risk Management")
@@ -4434,6 +4696,8 @@ if __name__ == "__main__":
                 st.sidebar.write(f"- Total stocks: {len(NIFTY_100)}")
             elif universe == "Midcap 150":
                 st.sidebar.write(f"- Total stocks: {len(NIFTY_MIDCAP_150)}")
+            elif universe == "F&O Stocks":
+                st.sidebar.write(f"- Total stocks: {len(FNO_STOCKS)}")
             
             # Auto-execution checks
             st.sidebar.write(f"**Auto-execution Checks:**")
@@ -4586,7 +4850,7 @@ if __name__ == "__main__":
                 if generate_signals:
                     _scan_cap = max_scan
                     if auto_generate and not generate_btn:
-                        _scan_cap = min(max_scan, 100) if max_scan else 100  # covers full Nifty 100; keeps unattended scans bounded
+                        _scan_cap = min(max_scan, 220) if max_scan else 220  # covers the full F&O list; keeps unattended scans inside the 5-min refresh window
                     with st.spinner(f"Scanning {universe} stocks with enhanced strategies..."):
                         # Use high accuracy when enabled
                         signals = trader.generate_quality_signals(
@@ -4647,12 +4911,12 @@ if __name__ == "__main__":
                                 "Current Price": f"₹{s['current_price']:.2f}",
                                 "Target": f"₹{s['target']:.2f}",
                                 "Stop Loss": f"₹{s['stop_loss']:.2f}",
-                                "Confidence": f"{s['confidence']:.1%}",
+                                "Confidence": f"{s.get('confidence', 0):.1%}",
                                 "Quality": quality_text,
                                 "Volume Ratio": f"{s.get('volume_ratio', 1):.1f}x",
-                                "R:R": f"{s['risk_reward']:.2f}",
-                                "Score": s['score'],
-                                "RSI": f"{s['rsi']:.1f}"
+                                "R:R": f"{s.get('risk_reward', 0):.2f}",
+                                "Score": s.get('score', 0),
+                                "RSI": (f"{s['rsi']:.1f}" if s.get('rsi') is not None else "-")
                             })
                     
                         st.dataframe(pd.DataFrame(data_rows), width='stretch')
@@ -4904,31 +5168,128 @@ if __name__ == "__main__":
         try:
             with tabs[3]:
                 st.subheader("📋 Trade History")
-            
-                if SQLALCHEMY_AVAILABLE and trader.data_manager.database.connected:
-                    st.success("✅ Database connected - trades are being stored")
+                _db = trader.data_manager.database
+
+                if _db.connected:
+                    st.success(f"✅ Saved automatically - every trade is written to the journal the moment it opens and again when it closes. Storage: {_db.location}")
+                    if _db.backend == "sqlite" and os.getcwd().startswith("/mount"):
+                        st.warning("Streamlit Cloud erases local files when the app is rebooted or redeployed (a normal refresh is safe). "
+                                   "Use the backup download below now and then, or set a DATABASE_URL secret for a permanent external database.")
                 else:
-                    st.warning("⚠️ Database not available - showing recent trades only")
-            
-                trade_history = trader.get_trade_history_data()
-                if trade_history:
-                    # Create DataFrame for display
-                    df_history = pd.DataFrame(trade_history)
-                
-                    # Display with HTML formatting
-                    for _, trade in df_history.iterrows():
-                        st.markdown(f"""
-                        <div class="{trade.get('_row_class', '')}">
-                            <div style="padding: 10px;">
-                                <strong>{trade['Symbol']}</strong> | {trade['Action']} | Qty: {trade['Quantity']}<br>
-                                Entry: {trade['Entry Price']} | Exit: {trade['Exit Price']} | {trade['P&L']}<br>
-                                Duration: {trade['Duration']} | Strategy: {trade['Strategy']}
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                    st.error(f"⚠️ Journal database unavailable ({_db.last_error or 'sqlalchemy missing'}). History will be lost on refresh.")
+
+                _h = _db.load_trades() if _db.connected else pd.DataFrame()
+                if _h is None or _h.empty:
+                    st.info("No trades saved yet. Executed trades will appear here and stay after refresh.")
                 else:
-                    st.info("No trade history available")
-    
+                    _h = _h.copy()
+                    _h["entry_dt"] = pd.to_datetime(_h["entry_time"], errors="coerce", utc=True, format="mixed").dt.tz_convert("Asia/Kolkata")
+                    _h["exit_dt"] = pd.to_datetime(_h["exit_time"], errors="coerce", utc=True, format="mixed").dt.tz_convert("Asia/Kolkata")
+                    _h = _h[_h["entry_dt"].notna()].sort_values("entry_dt", ascending=False)
+                    for _c in ["quantity", "entry_price", "exit_price", "pnl", "confidence", "win_probability", "quality_score", "risk_reward", "volume_ratio", "rsi"]:
+                        _h[_c] = pd.to_numeric(_h[_c], errors="coerce")
+                    _h["status"] = _h["status"].fillna("OPEN").str.upper()
+                    _h["date"] = _h["entry_dt"].dt.date
+                    _h["strategy"] = _h["strategy"].fillna("Manual")
+                    _h["symbol_short"] = _h["symbol"].str.replace(".NS", "", regex=False)
+
+                    # ---- download full backup / restore
+                    _bc1, _bc2 = st.columns([1, 2])
+                    _bc1.download_button("⬇️ Download full history (CSV)", _db.load_trades().to_csv(index=False).encode("utf-8"),
+                                         file_name=f"trade_history_{now_indian().strftime('%Y%m%d')}.csv", mime="text/csv", key="hist_dl")
+                    with _bc2.expander("Restore from a CSV backup"):
+                        _up = st.file_uploader("Upload a CSV previously downloaded here", type="csv", key="hist_upload")
+                        if _up is not None and st.button("Import into journal", key="hist_import"):
+                            _n = _db.import_trades(pd.read_csv(_up))
+                            trader.restore_from_db()
+                            st.success(f"Imported {_n} trades")
+                            st.rerun()
+
+                    # ---- filters
+                    _f1, _f2, _f3, _f4 = st.columns([2, 2, 1.5, 1.5])
+                    _dmin, _dmax = _h["date"].min(), max(_h["date"].max(), now_indian().date())
+                    _rng = _f1.date_input("Date range", value=(_dmin, _dmax), min_value=_dmin, max_value=_dmax, key="hist_dates")
+                    _strats = sorted(_h["strategy"].unique())
+                    _sel = _f2.multiselect("Strategy", _strats, default=_strats, key="hist_strats")
+                    _acts = _f3.multiselect("Side", ["BUY", "SELL"], default=["BUY", "SELL"], key="hist_acts")
+                    _auto_only = _f4.checkbox("Auto trades only", value=False, key="hist_auto")
+                    if isinstance(_rng, (tuple, list)) and len(_rng) == 2:
+                        _d0, _d1 = _rng
+                    else:
+                        _d0 = _d1 = (_rng[0] if isinstance(_rng, (tuple, list)) else _rng)
+                    _v = _h[(_h["date"] >= _d0) & (_h["date"] <= _d1) & _h["strategy"].isin(_sel) & _h["action"].isin(_acts)]
+                    if _auto_only:
+                        _v = _v[_v["auto_trade"].astype(bool)]
+
+                    _closed = _v[_v["status"] == "CLOSED"]
+                    _wins = _closed[_closed["pnl"] > 0]
+                    _loss = _closed[_closed["pnl"] <= 0]
+                    _n = len(_closed)
+                    _wr = (len(_wins) / _n) if _n else 0.0
+                    _gp, _gl = _wins["pnl"].sum(), -_loss["pnl"].sum()
+                    _pf = (_gp / _gl) if _gl > 0 else (float("inf") if _gp > 0 else 0.0)
+                    k1, k2, k3, k4, k5 = st.columns(5)
+                    k1.metric("Closed trades", _n)
+                    k2.metric("Win rate", f"{_wr:.1%}")
+                    k3.metric("Net P&L", f"₹{_closed['pnl'].sum():+,.0f}")
+                    k4.metric("Profit factor", "∞" if _pf == float("inf") else f"{_pf:.2f}")
+                    k5.metric("Expectancy / trade", f"₹{(_closed['pnl'].mean() if _n else 0):+,.0f}")
+                    k6, k7, k8, k9, k10 = st.columns(5)
+                    k6.metric("Avg win", f"₹{(_wins['pnl'].mean() if len(_wins) else 0):+,.0f}")
+                    k7.metric("Avg loss", f"₹{(_loss['pnl'].mean() if len(_loss) else 0):+,.0f}")
+                    k8.metric("Best trade", f"₹{(_closed['pnl'].max() if _n else 0):+,.0f}")
+                    k9.metric("Worst trade", f"₹{(_closed['pnl'].min() if _n else 0):+,.0f}")
+                    k10.metric("Open now", int((_v["status"] == "OPEN").sum()))
+
+                    if _n:
+                        st.markdown("##### How reliable are the signals? (closed trades)")
+                        def _grp(frame, key):
+                            g = frame.groupby(key).agg(Trades=("pnl", "size"), Wins=("pnl", lambda x: int((x > 0).sum())),
+                                                       NetPnL=("pnl", "sum"), AvgPnL=("pnl", "mean"),
+                                                       PredictedWin=("win_probability", "mean")).reset_index()
+                            g["ActualWin"] = g["Wins"] / g["Trades"]
+                            g["Edge"] = g["ActualWin"] - g["PredictedWin"]
+                            return g
+                        _bs = _grp(_closed, "strategy").rename(columns={"strategy": "Strategy"})
+                        _fmt = {"ActualWin": "{:.0%}", "PredictedWin": "{:.0%}", "Edge": "{:+.0%}", "NetPnL": "₹{:+,.0f}", "AvgPnL": "₹{:+,.0f}"}
+                        st.caption("ActualWin = what really happened. PredictedWin = the win probability the scanner assigned at entry. "
+                                   "Edge = Actual - Predicted. Small samples (under ~30 trades) are noisy - judge over weeks, not days.")
+                        st.dataframe(_bs.style.format(_fmt, na_rep="-"), width="stretch", hide_index=True)
+
+                        _cc1, _cc2 = st.columns(2)
+                        _closed = _closed.assign(Quality=pd.cut(_closed["quality_score"], [-1, 59.99, 79.99, 1000], labels=["Low (<60)", "Medium (60-79)", "High (80+)"]))
+                        _bq = _grp(_closed.dropna(subset=["Quality"]), "Quality").rename(columns={"Quality": "Quality score"}) if _closed["Quality"].notna().any() else None
+                        if _bq is not None:
+                            _cc1.markdown("**By quality score**")
+                            _cc1.dataframe(_bq.style.format(_fmt, na_rep="-"), width="stretch", hide_index=True)
+                        _closed["exit_reason"] = _closed["exit_reason"].fillna("n/a")
+                        _be = _closed.groupby("exit_reason").agg(Trades=("pnl", "size"), NetPnL=("pnl", "sum")).reset_index().rename(columns={"exit_reason": "Exit reason"})
+                        _cc2.markdown("**By exit reason**")
+                        _cc2.dataframe(_be.style.format({"NetPnL": "₹{:+,.0f}"}), width="stretch", hide_index=True)
+
+                        _daily = _closed.assign(Day=_closed["exit_dt"].dt.date.fillna(_closed["date"])).groupby("Day")["pnl"].sum()
+                        st.markdown("##### Daily P&L")
+                        st.bar_chart(_daily)
+
+                    st.markdown("##### All trades")
+                    _t = pd.DataFrame({
+                        "Date": _v["date"], "Entry time": _v["entry_dt"].dt.strftime("%H:%M:%S"),
+                        "Symbol": _v["symbol_short"], "Side": _v["action"], "Qty": _v["quantity"],
+                        "Entry": _v["entry_price"], "Exit": _v["exit_price"], "P&L": _v["pnl"].where(_v["status"] == "CLOSED"),
+                        "P&L %": (_v["pnl"] / (_v["quantity"] * _v["entry_price"]) * 100).where(_v["status"] == "CLOSED"),
+                        "Exit time": _v["exit_dt"].dt.strftime("%H:%M:%S"),
+                        "Held (min)": ((_v["exit_dt"] - _v["entry_dt"]).dt.total_seconds() / 60).round(0),
+                        "Exit reason": _v["exit_reason"], "Status": _v["status"], "Strategy": _v["strategy"],
+                        "Auto": _v["auto_trade"].astype(bool).map({True: "Yes", False: "No"}),
+                        "Confidence": _v["confidence"], "Win prob": _v["win_probability"], "Quality": _v["quality_score"],
+                        "R:R": _v["risk_reward"], "Vol ratio": _v["volume_ratio"], "RSI": _v["rsi"],
+                        "Universe": _v["universe"], "Data": _v["data_source"],
+                    })
+                    st.dataframe(_t.style.format({"Entry": "₹{:,.2f}", "Exit": "₹{:,.2f}", "P&L": "₹{:+,.2f}", "P&L %": "{:+.2f}%",
+                                                  "Confidence": "{:.0%}", "Win prob": "{:.0%}", "Quality": "{:.0f}", "R:R": "{:.2f}",
+                                                  "Vol ratio": "{:.1f}x", "RSI": "{:.1f}"}, na_rep="-"),
+                                 width="stretch", hide_index=True)
+
             # Tab 5: RSI Extreme
         except Exception as _tab_e:
             with tabs[3]:
