@@ -764,6 +764,9 @@ class KiteConnectManager:
         self._fail_count = 0
         self._disabled_until = 0.0
         self.last_error = ""
+        from collections import Counter as _Counter
+        self.stats = _Counter()          # why Kite did / didn't supply data (shown in scan diagnostics)
+        self.error_samples = []
 
     KITE_INTERVALS = {"1m": "minute", "5m": "5minute", "15m": "15minute", "30m": "30minute", "1h": "60minute"}
     KITE_INDEX_TOKENS = {"^NSEI": 256265, "^NSEBANK": 260105}
@@ -776,6 +779,8 @@ class KiteConnectManager:
         if cached:
             self._instruments = cached
             return cached
+        if self.kite is None or not self.is_authenticated:
+            return {}
         rows = self.kite.instruments("NSE")
         self._instruments = {r["tradingsymbol"]: r["instrument_token"]
                              for r in rows if r.get("instrument_type") == "EQ"}
@@ -798,35 +803,48 @@ class KiteConnectManager:
     def get_instrument_token(self, symbol):
         if symbol in self.KITE_INDEX_TOKENS:
             return self.KITE_INDEX_TOKENS[symbol]
+        if not (self.is_authenticated and self.kite is not None):
+            return None        # not logged in: not an error, nothing to count
         try:
             return self._ensure_instruments().get(symbol.replace(".NS", ""))
         except Exception as e:
             self._handle_error(e)
             return None
 
-    def _handle_error(self, e):
-        self.last_error = f"{type(e).__name__}: {e}"
+    def _handle_error(self, e, counts_toward_pause=True):
+        name = type(e).__name__
+        self.last_error = f"{name}: {e}"
+        self.stats[f"api error: {name}"] += 1
+        if len(self.error_samples) < 5 and self.last_error[:120] not in self.error_samples:
+            self.error_samples.append(self.last_error[:120])
         logger.error(f"Kite error: {self.last_error}")
-        if type(e).__name__ == "TokenException" or "access_token" in str(e).lower():
+        if name == "TokenException" or "access_token" in str(e).lower():
             # Kite access tokens expire daily (~6 AM IST) - require re-login
             self.logout()
             return
+        # Bad-request style errors (unknown instrument, bad dates) are per-symbol problems, not an outage.
+        if name in ("InputException",) or not counts_toward_pause:
+            return
         self._fail_count += 1
-        if self._fail_count >= 5:  # repeated failures (rate limit / network): pause Kite, let Yahoo cover
-            self._disabled_until = time.time() + 120
+        if self._fail_count >= 8:     # sustained outage / throttling: short pause, Yahoo covers meanwhile
+            self._disabled_until = time.time() + 20
             self._fail_count = 0
+            self.stats["paused after repeated errors"] += 1
 
     def fetch_candles(self, symbol, interval="15m", days=None):
         """OHLCV DataFrame (Open/High/Low/Close/Volume, IST-aware index) from Kite, or None."""
         if not (self.is_authenticated and self.kite is not None):
+            self.stats["not authenticated"] += 1
             return None
         if time.time() < self._disabled_until:
+            self.stats["skipped: Kite paused after errors"] += 1
             return None
         ki = self.KITE_INTERVALS.get(interval)
         if ki is None:
             return None
         token = self.get_instrument_token(symbol)
         if token is None:
+            self.stats["symbol not found on Kite"] += 1
             return None
         days = days or self.LOOKBACK_DAYS.get(interval, 7)
         key = (token, ki, days)
@@ -834,20 +852,28 @@ class KiteConnectManager:
         cached = self._candle_cache.get(key)
         if cached and time.time() - cached[0] < ttl:
             return cached[1].copy()
+        rows = None
         with self._lock:
-            wait = 0.36 - (time.time() - self._last_hist_call)  # Kite historical limit ~3 req/sec
-            if wait > 0:
-                time.sleep(wait)
-            try:
-                to_dt = now_indian().replace(tzinfo=None)
-                rows = self.kite.historical_data(token, to_dt - timedelta(days=days), to_dt, ki)
-                self._fail_count = 0
-            except Exception as e:
-                self._handle_error(e)
-                return None
-            finally:
-                self._last_hist_call = time.time()
+            for attempt in (1, 2):
+                wait = 0.36 - (time.time() - self._last_hist_call)  # Kite historical limit ~3 req/sec
+                if wait > 0:
+                    time.sleep(wait)
+                try:
+                    to_dt = now_indian().replace(tzinfo=None)
+                    rows = self.kite.historical_data(token, to_dt - timedelta(days=days), to_dt, ki)
+                    self._fail_count = 0
+                    break
+                except Exception as e:
+                    if attempt == 1 and "too many" in str(e).lower():
+                        self.stats["rate-limited (retried)"] += 1
+                        time.sleep(1.2)
+                        continue
+                    self._handle_error(e)
+                    return None
+                finally:
+                    self._last_hist_call = time.time()
         if not rows:
+            self.stats["Kite returned no candles"] += 1
             return None
         df = pd.DataFrame(rows)
         df["date"] = pd.to_datetime(df["date"])
@@ -855,6 +881,8 @@ class KiteConnectManager:
                                                    "close": "Close", "volume": "Volume"})
         df = df[["Open", "High", "Low", "Close", "Volume"]]
         self._candle_cache[key] = (time.time(), df)
+        self.stats["ok"] += 1
+        self.last_error = ""
         return df.copy()
 
     def login(self):
@@ -3802,6 +3830,9 @@ class MultiStrategyIntradayTrader:
         reject_reasons = Counter()
         failed_symbols = []
         scan_errors = []
+        _km0 = self.data_manager.kite_manager
+        _stats0 = dict(_km0.stats)
+        _km0.error_samples = []
         
         # Determine which universe to scan
         if universe == "Nifty 50":
@@ -3893,6 +3924,8 @@ class MultiStrategyIntradayTrader:
             "scan_errors": scan_errors,
             "kite_status": ("connected" if km.is_authenticated else "NOT connected") +
                            (f" | last error: {km.last_error[:150]}" if km.last_error else ""),
+            "kite_calls": {k: v - _stats0.get(k, 0) for k, v in km.stats.items() if v - _stats0.get(k, 0) > 0},
+            "kite_error_samples": list(km.error_samples),
             "yahoo_ok": bool(YF_LIVE_DATA_OK),
             "data_mode": self.data_manager._data_mode(),
         }
@@ -4871,6 +4904,10 @@ if __name__ == "__main__":
                                      f"Kite: {_d['kite_status']} | Yahoo: {'OK' if _d['yahoo_ok'] else 'failing/blocked'} | "
                                      f"Source mode: {_d['data_mode']}. Fix the data feed first - signals on synthetic prices are meaningless.")
                         with st.expander("🔎 Scan diagnostics (why signals were / weren't produced)", expanded=True):
+                            if _d.get("kite_calls"):
+                                st.write("**Kite data requests this scan**", _d["kite_calls"])
+                                if _d.get("kite_error_samples"):
+                                    st.write("Kite error samples", _d["kite_error_samples"])
                             if _d.get("scan_errors"):
                                 st.error("Errors while scanning (first 3): " + " | ".join(_d["scan_errors"]))
                             if _d.get("failed_symbols"):
