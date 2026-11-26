@@ -1135,13 +1135,13 @@ def get_shared_kite_manager():
     mgr.restore_session()
     return mgr
 
-# NEW: Peak Market Hours Check - Optimized for 9:30 AM - 2:30 PM
+# NEW: Peak Market Hours Check - Optimized for 9:30 AM - 3:00 PM
 def is_peak_market_hours():
     """Check if current time is during peak market hours (9:30 AM - 2:30 PM)"""
     n = now_indian()
     try:
-        peak_start = IND_TZ.localize(datetime.combine(n.date(), dt_time(10, 0)))
-        peak_end = IND_TZ.localize(datetime.combine(n.date(), dt_time(14, 0)))
+        peak_start = IND_TZ.localize(datetime.combine(n.date(), dt_time(9, 0)))
+        peak_end = IND_TZ.localize(datetime.combine(n.date(), dt_time(15, 0)))
         return peak_start <= n <= peak_end
     except Exception:
         return True  # Default to True during market hours
@@ -4333,7 +4333,7 @@ if __name__ == "__main__":
         # NEW: Peak Hours Indicator
         peak_hours = is_peak_market_hours()
         peak_color = "🟢" if peak_hours else "🔴"
-        cols[4].metric("Peak Hours (10AM-2PM)", f"{peak_color} {'YES' if peak_hours else 'NO'}")
+        cols[4].metric("Peak Hours (9:15AM-3PM)", f"{peak_color} {'YES' if peak_hours else 'NO'}")
         
         cols[5].metric("Auto Trades", f"{trader.auto_trades_count}/{MAX_AUTO_TRADES}")
         cols[6].metric("Available Cash", f"₹{trader.cash:,.0f}")
@@ -4416,7 +4416,7 @@ if __name__ == "__main__":
         with col4:
             peak_hours_status = "PEAK" if is_peak_market_hours() else "OFF-PEAK"
             peak_sentiment = 80 if is_peak_market_hours() else 30
-            st.markdown(create_circular_market_mood_gauge("PEAK HOURS", 0, 0, peak_sentiment).replace("₹0", "10AM-2PM").replace("0.00%", peak_hours_status), unsafe_allow_html=True)
+            st.markdown(create_circular_market_mood_gauge("PEAK HOURS", 0, 0, peak_sentiment).replace("₹0", "9:30AM-3PM").replace("0.00%", peak_hours_status), unsafe_allow_html=True)
     
         # Main metrics with card styling
         st.subheader("📈 Live Metrics")
@@ -4500,7 +4500,7 @@ if __name__ == "__main__":
         if is_peak_market_hours():
             st.markdown("""
             <div class="alert-success">
-                <strong>🎯 Peak Market Hours Active (9:30 AM - 2:30 PM)</strong>
+                <strong>🎯 Peak Market Hours Active (9:30 AM - 3:00 PM)</strong>
                 <div style="margin-top: 5px;">
                     • Increased signal frequency during peak hours<br>
                     • More aggressive scanning for opportunities<br>
