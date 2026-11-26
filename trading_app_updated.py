@@ -200,7 +200,7 @@ MAX_STOCK_TRADES = 10
 MAX_AUTO_TRADES = 10
 
 SIGNAL_REFRESH_MS = 30000
-AUTO_EXEC_MIN_QUALITY = 65
+AUTO_EXEC_MIN_QUALITY = 80  # strict auto-execution quality floor
 # Backtest win-rate gate. The old 0.65 gate was inconsistent with the engine itself: it simulates a 2R target
 # vs 1R stop (break-even win rate ~33%), and every standard strategy's prior (0.52-0.62) is BELOW 0.65, so
 # standard strategies could essentially never pass. 0.45 at 2:1 payoff is still clearly positive expectancy.
@@ -1135,16 +1135,17 @@ def get_shared_kite_manager():
     mgr.restore_session()
     return mgr
 
-# NEW: Peak Market Hours Check - Optimized for 9:30 AM - 3:00 PM
+# Peak market window requested: 09:15 AM to 03:00 PM India time.
 def is_peak_market_hours():
-    """Check if current time is during peak market hours (9:30 AM - 2:30 PM)"""
+    """True only during the configured peak window (09:15-15:00 IST)."""
     n = now_indian()
     try:
-        peak_start = IND_TZ.localize(datetime.combine(n.date(), dt_time(9, 0)))
+        peak_start = IND_TZ.localize(datetime.combine(n.date(), dt_time(9, 15)))
         peak_end = IND_TZ.localize(datetime.combine(n.date(), dt_time(15, 0)))
         return peak_start <= n <= peak_end
     except Exception:
-        return True  # Default to True during market hours
+        logger.exception("Peak-hours check failed; fail closed.")
+        return False
 
 # NEW: Advanced Risk Management System
 class AdvancedRiskManager:
@@ -3939,16 +3940,45 @@ class MultiStrategyIntradayTrader:
         return signals[:20]  # Return top 20 signals
 
     def auto_execute_signals(self, signals):
-        """Auto-execute signals with enhanced feedback"""
+        """Execute only strictly-qualified signals during the configured IST peak window."""
         executed = []
-        
+
+        # Hard time gate: do not open new automatic positions outside 09:15-15:00 IST.
+        if not is_peak_market_hours():
+            st.info("Auto-entry paused: outside configured peak hours (09:15-15:00 IST).")
+            return executed
+
         if not self.can_auto_trade():
             st.warning(f"⚠️ Cannot auto-trade. Check: Daily trades: {self.daily_trades}/{MAX_DAILY_TRADES}, Auto trades: {self.auto_trades_count}/{MAX_AUTO_TRADES}, Market open: {market_open()}")
             return executed
-        
-        st.info(f"🚀 Attempting to auto-execute {len(signals[:10])} signals...")
-        
-        for signal in signals[:10]:  # Limit to first 10 signals
+
+        eligible = []
+        for signal in signals:
+            quality = float(signal.get("quality_score", 0) or 0)
+            confidence = float(signal.get("confidence", 0) or 0)
+            score = float(signal.get("score", 0) or 0)
+            rr = float(signal.get("risk_reward", 0) or 0)
+            vol = float(signal.get("volume_ratio", 0) or 0)
+            side = signal.get("action")
+            entry = float(signal.get("entry", 0) or 0)
+            sl = signal.get("stop_loss")
+            target = signal.get("target")
+
+            valid_levels = entry > 0 and sl is not None and target is not None
+            if valid_levels:
+                sl, target = float(sl), float(target)
+                valid_levels = ((side == "BUY" and sl < entry < target) or
+                                (side == "SELL" and target < entry < sl))
+
+            if (quality >= AUTO_EXEC_MIN_QUALITY and confidence >= 0.75 and
+                    score >= 7 and rr >= 2.0 and vol >= 1.0 and valid_levels):
+                eligible.append(signal)
+
+        st.info(f"Strict auto-entry filter: {len(eligible)} of {len(signals)} signals passed "
+                f"(quality ≥ {AUTO_EXEC_MIN_QUALITY}, confidence ≥ 75%, score ≥ 7, R:R ≥ 2, valid SL/Target).")
+        st.info(f"🚀 Attempting to auto-execute {len(eligible[:3])} qualified signals...")
+
+        for signal in eligible[:3]:  # Maximum 3 qualified entries per scan cycle
             if not self.can_auto_trade():
                 st.warning("Auto-trade limit reached")
                 break
@@ -4333,7 +4363,7 @@ if __name__ == "__main__":
         # NEW: Peak Hours Indicator
         peak_hours = is_peak_market_hours()
         peak_color = "🟢" if peak_hours else "🔴"
-        cols[4].metric("Peak Hours (9:15AM-3PM)", f"{peak_color} {'YES' if peak_hours else 'NO'}")
+        cols[4].metric("Peak Hours (9:15AM-3:00PM)", f"{peak_color} {'YES' if peak_hours else 'NO'}")
         
         cols[5].metric("Auto Trades", f"{trader.auto_trades_count}/{MAX_AUTO_TRADES}")
         cols[6].metric("Available Cash", f"₹{trader.cash:,.0f}")
@@ -4416,7 +4446,7 @@ if __name__ == "__main__":
         with col4:
             peak_hours_status = "PEAK" if is_peak_market_hours() else "OFF-PEAK"
             peak_sentiment = 80 if is_peak_market_hours() else 30
-            st.markdown(create_circular_market_mood_gauge("PEAK HOURS", 0, 0, peak_sentiment).replace("₹0", "9:30AM-3PM").replace("0.00%", peak_hours_status), unsafe_allow_html=True)
+            st.markdown(create_circular_market_mood_gauge("PEAK HOURS", 0, 0, peak_sentiment).replace("₹0", "10AM-2PM").replace("0.00%", peak_hours_status), unsafe_allow_html=True)
     
         # Main metrics with card styling
         st.subheader("📈 Live Metrics")
@@ -4500,7 +4530,7 @@ if __name__ == "__main__":
         if is_peak_market_hours():
             st.markdown("""
             <div class="alert-success">
-                <strong>🎯 Peak Market Hours Active (9:30 AM - 3:00 PM)</strong>
+                <strong>🎯 Peak Market Hours Active (9:15 AM - 3:00 PM)</strong>
                 <div style="margin-top: 5px;">
                     • Increased signal frequency during peak hours<br>
                     • More aggressive scanning for opportunities<br>
@@ -4826,7 +4856,7 @@ if __name__ == "__main__":
                     • Confidence threshold reduced from 75% to <strong>70%</strong><br>
                     • Minimum score reduced from 7 to <strong>6</strong><br>
                     • Added ADX trend filter: <strong>ADX > 25</strong><br>
-                    • Optimized for peak market hours (9:30 AM - 2:30 PM)<br>
+                    • Peak window configured: 9:15 AM - 3:00 PM IST<br>
                     • These changes should generate more trading opportunities
                 </div>
                 """, unsafe_allow_html=True)
@@ -4987,7 +5017,7 @@ if __name__ == "__main__":
                                 else:
                                     st.warning("No trades were auto-executed. Check trade limits or existing positions.")
                             elif trader.auto_execution and not auto_execute_now:
-                                st.info("Auto-execution is active. Signals with quality score ≥ 65 will be executed automatically.")
+                                st.info("Auto-execution is active. Signals must pass quality ≥ {AUTO_EXEC_MIN_QUALITY}, confidence ≥ 75%, score ≥ 7, R:R ≥ 2, and valid SL/Target.")
                     
                         st.subheader("Manual Execution")
                         for idx, s in enumerate(signals[:5]):  # Show only first 5 for better UI
