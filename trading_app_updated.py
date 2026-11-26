@@ -4039,7 +4039,7 @@ if __name__ == "__main__":
         # NEW: Peak Hours Indicator
         peak_hours = is_peak_market_hours()
         peak_color = "🟢" if peak_hours else "🔴"
-        cols[4].metric("Peak Hours (10AM-2PM)", f"{peak_color} {'YES' if peak_hours else 'NO'}")
+        cols[4].metric("Peak Hours (9:15AM-3PM)", f"{peak_color} {'YES' if peak_hours else 'NO'}")
         
         cols[5].metric("Auto Trades", f"{trader.auto_trades_count}/{MAX_AUTO_TRADES}")
         cols[6].metric("Available Cash", f"₹{trader.cash:,.0f}")
